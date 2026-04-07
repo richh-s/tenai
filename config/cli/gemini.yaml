@@ -1,0 +1,181 @@
+# Gemini CLI Configuration
+# Managed by: scripts/install/cli_setup.sh
+# Targets:    make cli-setup CLI=gemini | make cli-extensions CLI=gemini | etc.
+
+# ══════════════════════════════════════════════════════════════════════════════
+# EXTENSIONS (gemini extensions install {url} --auto-update)
+# ══════════════════════════════════════════════════════════════════════════════
+
+extensions:
+  # ── Core (must-have) ──
+  - name: conductor
+    url: "https://github.com/gemini-cli-extensions/conductor"
+    description: "Task planning — spec→plan→implement lifecycle"
+
+  - name: security
+    url: "https://github.com/gemini-cli-extensions/security"
+    description: "Find vulnerabilities in code changes and PRs"
+
+  - name: code-review
+    url: "https://github.com/gemini-cli-extensions/code-review"
+    description: "Structured code review for changes"
+
+  - name: superpowers
+    url: "https://github.com/obra/superpowers"
+    description: "Core skills: TDD, debugging, collaboration patterns"
+
+  # ── Developer Tools ──
+  - name: context7
+    url: "https://github.com/upstash/context7"
+    description: "Up-to-date library docs for any prompt"
+
+  - name: github
+    url: "https://github.com/github/github-mcp-server"
+    description: "GitHub official MCP — issues, PRs, repos"
+
+  - name: chrome-devtools-mcp
+    url: "https://github.com/ChromeDevTools/chrome-devtools-mcp"
+    description: "Chrome DevTools for coding agents"
+
+  # ── Infrastructure ──
+  - name: terraform
+    url: "https://github.com/hashicorp/terraform-mcp-server"
+    description: "Terraform IaC automation and interaction"
+
+  # ── Optional (uncomment to enable) ──
+  # - name: cloud-run
+  #   url: "https://github.com/GoogleCloudPlatform/cloud-run-mcp"
+  #   description: "Deploy apps to Cloud Run"
+  # - name: mcp-server-kubernetes
+  #   url: "https://github.com/Flux159/mcp-server-kubernetes"
+  #   description: "Kubernetes management commands"
+  # - name: google-workspace
+  #   url: "https://github.com/gemini-cli-extensions/workspace"
+  #   description: "Access Google Workspace docs/sheets/slides"
+  # - name: flutter
+  #   url: "https://github.com/gemini-cli-extensions/flutter"
+  #   description: "Flutter and Dart commands"
+  # - name: exa-mcp-server
+  #   url: "https://github.com/exa-labs/exa-mcp-server"
+  #   description: "Web search, crawling, and code docs"
+  # - name: mcp-toolbox-for-databases
+  #   url: "https://github.com/googleapis/genai-toolbox"
+  #   description: "MCP for 30+ database types"
+  # - name: grafana
+  #   url: "https://github.com/grafana/mcp-grafana"
+  #   description: "Grafana dashboards and metrics"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SKILLS (copied to ~/.gemini/skills/{name}/)
+# ══════════════════════════════════════════════════════════════════════════════
+# Vercel Skills CLI: npx skills add <owner/repo>
+# Local skills: place folders in config/cli/skills/{name}/ with SKILL.md
+
+skills:
+  - name: validate-tasks
+    source: ".gemini/skills/validate-tasks"
+  - name: proof-of-work
+    source: ".gemini/skills/proof-of-work"
+  #   source: "config/cli/skills/verify"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# VERCEL SKILLS (installed via: npx skills add <package>)
+# Cross-CLI compatible — works with gemini-cli, claude-code, codex, cursor, etc.
+# ══════════════════════════════════════════════════════════════════════════════
+
+vercel_skills:
+  # ── Essential (verified in anthropics/skills repo) ──
+  - name: webapp-testing
+    package: "anthropics/skills/webapp-testing"
+    description: "Playwright-based web app testing and debugging"
+
+  - name: mcp-builder
+    package: "anthropics/skills/mcp-builder"
+    description: "Guide for creating high-quality MCP servers"
+
+  - name: skill-creator
+    package: "anthropics/skills/skill-creator"
+    description: "Create, modify, and optimize skills"
+
+  # ── Document Generation ──
+  - name: pdf
+    package: "anthropics/skills/pdf"
+    description: "Read, create, merge, split PDF files"
+
+  - name: docx
+    package: "anthropics/skills/docx"
+    description: "Word document generation and editing"
+
+  - name: xlsx
+    package: "anthropics/skills/xlsx"
+    description: "Spreadsheet creation and manipulation"
+
+  - name: pptx
+    package: "anthropics/skills/pptx"
+    description: "PowerPoint presentation creation"
+
+  # ── Optional ──
+  # - name: frontend-design
+  #   package: "anthropics/skills/frontend-design"
+  #   description: "Production-grade frontend UI design"
+  # - name: claude-api
+  #   package: "anthropics/skills/claude-api"
+  #   description: "Claude API integration patterns"
+  # - name: web-artifacts-builder
+  #   package: "anthropics/skills/web-artifacts-builder"
+  #   description: "Multi-component React artifacts"
+  # - name: theme-factory
+  #   package: "anthropics/skills/theme-factory"
+  #   description: "Styling artifacts with themes"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LAUNCH ARGS (appended to gemini command when dispatching agents)
+# ══════════════════════════════════════════════════════════════════════════════
+
+launch_args:
+  - "--yolo"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HOOKS — Automation scripts triggered at lifecycle events
+#
+# Format: JSON in ~/.gemini/settings.json under "hooks" key
+# Source: config/cli/hooks/gemini_hooks.json (merged into settings.json)
+#
+# Event reference:
+#   SessionStart       — session begins
+#   SessionEnd         — session ends
+#   BeforeAgent        — before agent processes a request
+#   AfterAgent         — after agent completes
+#   BeforeModel        — before model call
+#   AfterModel         — after model response
+#   BeforeToolSelection — before tool selection
+#   BeforeTool         — before a tool runs (can deny)
+#   AfterTool          — after a tool completes
+#   PreCompress        — before context compaction
+#   Notification       — when CLI needs user attention
+# ══════════════════════════════════════════════════════════════════════════════
+
+hooks:
+  source: "config/cli/hooks/gemini_hooks.json"
+  # Recommended hooks (enabled by default):
+  #   - notify          — OS notification when Gemini needs input
+  #   - protect-files   — block edits to .env, lockfiles, .git/
+  #   - post-compact    — re-inject critical context before compression
+  #   - audit-log       — log tool usage for debugging
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SETTINGS (merged into ~/.gemini/settings.json)
+# ══════════════════════════════════════════════════════════════════════════════
+
+settings:
+  general:
+    defaultApprovalMode: "auto_edit"
+  security:
+    enablePermanentToolApproval: true
+
+# ══════════════════════════════════════════════════════════════════════════════
+# RULES (copied to ~/.gemini/GEMINI.md if not present)
+# ══════════════════════════════════════════════════════════════════════════════
+
+rules:
+  source: "config/cli/rules/global_gemini.md"

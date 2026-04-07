@@ -1,0 +1,140 @@
+name: PR Review → ntfy
+
+# Trigger on PR reviews (submitted) and inline review comments (created)
+on:
+  pull_request_review:
+    types: [submitted]
+  pull_request_review_comment:
+    types: [created]
+
+env:
+  NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+
+jobs:
+  notify-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    # ── Branch filter ──────────────────────────────────────────────────────────
+    # TESTING: Only trigger for specific branches. Remove this 'if' to enable
+    # for all branches once the pipeline is validated.
+    if: >-
+      contains(fromJSON('["test/review-notify"]'),
+        github.event.pull_request.head.ref)
+
+    steps:
+      - name: Determine reviewer and event type
+        id: meta
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          # pull_request_review fields
+          REVIEW_USER: ${{ github.event.review.user.login }}
+          REVIEW_STATE: ${{ github.event.review.state }}
+          REVIEW_BODY: ${{ github.event.review.body }}
+          REVIEW_URL: ${{ github.event.review.html_url }}
+          # pull_request_review_comment fields
+          COMMENT_USER: ${{ github.event.comment.user.login }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          COMMENT_PATH: ${{ github.event.comment.path }}
+          COMMENT_LINE: ${{ github.event.comment.line }}
+          COMMENT_URL: ${{ github.event.comment.html_url }}
+          # PR fields (shared)
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          REPO: ${{ github.repository }}
+        run: |
+          # ── Determine user and body based on event type ──
+          if [ "$EVENT_NAME" = "pull_request_review" ]; then
+            USER="$REVIEW_USER"
+            BODY="$REVIEW_BODY"
+            URL="$REVIEW_URL"
+            TYPE="review"
+            DETAIL="State: ${REVIEW_STATE}"
+          else
+            USER="$COMMENT_USER"
+            BODY="$COMMENT_BODY"
+            URL="$COMMENT_URL"
+            TYPE="comment"
+            DETAIL="File: ${COMMENT_PATH}:${COMMENT_LINE}"
+          fi
+
+          # ── Exclude filter ──────────────────────────────────────────────
+          # Add logins to skip here (comma-separated). Empty = forward all.
+          EXCLUDE_LOGINS=""
+          if [ -n "$EXCLUDE_LOGINS" ]; then
+            for excluded in $(echo "$EXCLUDE_LOGINS" | tr ',' ' '); do
+              if [ "$USER" = "$excluded" ]; then
+                echo "⏭ Skipping excluded reviewer: $USER"
+                echo "skip=true" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            done
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "user=$USER" >> "$GITHUB_OUTPUT"
+          echo "type=$TYPE" >> "$GITHUB_OUTPUT"
+          echo "detail=$DETAIL" >> "$GITHUB_OUTPUT"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+          # Truncate body to 500 chars for ntfy
+          BODY_TRUNCATED=$(echo "$BODY" | head -c 500)
+          echo "body<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$BODY_TRUNCATED" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Send to ntfy.sh
+        if: steps.meta.outputs.skip != 'true'
+        env:
+          USER: ${{ steps.meta.outputs.user }}
+          TYPE: ${{ steps.meta.outputs.type }}
+          DETAIL: ${{ steps.meta.outputs.detail }}
+          BODY: ${{ steps.meta.outputs.body }}
+          URL: ${{ steps.meta.outputs.url }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ -z "$NTFY_TOPIC" ]; then
+            echo "NTFY_TOPIC not set — skipping notification"
+            exit 0
+          fi
+
+          # Determine emoji based on review type
+          EMOJI="💬"
+          PRIORITY=3
+          case "$TYPE" in
+            review)
+              STATE="${{ github.event.review.state }}"
+              case "$STATE" in
+                approved)          EMOJI="✅"; PRIORITY=3 ;;
+                changes_requested) EMOJI="🔴"; PRIORITY=4 ;;
+                commented)         EMOJI="💬"; PRIORITY=3 ;;
+              esac
+              ;;
+            comment)
+              EMOJI="📝"; PRIORITY=3
+              ;;
+          esac
+
+          curl -s -X POST "https://ntfy.sh/${NTFY_TOPIC}" \
+            -H "Content-Type: application/json" \
+            -H "Priority: ${PRIORITY}" \
+            -d "{
+              \"topic\": \"${NTFY_TOPIC}\",
+              \"title\": \"${EMOJI} PR #${PR_NUMBER} ${TYPE} by ${USER}\",
+              \"message\": \"Branch: ${PR_BRANCH}\n${DETAIL}\n\n${BODY}\",
+              \"tags\": [\"pr-review\", \"${USER}\", \"${REPO}\"],
+              \"click\": \"${URL}\",
+              \"extras\": {
+                \"type\": \"pr-review\",
+                \"reviewer\": \"${USER}\",
+                \"pr_number\": \"${PR_NUMBER}\",
+                \"branch\": \"${PR_BRANCH}\",
+                \"repo\": \"${REPO}\",
+                \"review_type\": \"${TYPE}\"
+              }
+            }"
+
+          echo "✓ Review notification sent (${USER} ${TYPE} on PR #${PR_NUMBER})"

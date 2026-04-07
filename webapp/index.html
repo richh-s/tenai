@@ -1,0 +1,2146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TenAI Control Plane</title>
+  <meta name="description" content="Remote control panel for managing GitHub organizations, repos, devices, and AI agent workloads across Tailscale mesh network">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0e17;
+      --bg-card: #111827;
+      --bg-card-hover: #1a2332;
+      --bg-input: #0d1117;
+      --border: #1e293b;
+      --border-hover: #334155;
+      --text: #e2e8f0;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --accent: #3b82f6;
+      --accent-glow: rgba(59, 130, 246, 0.15);
+      --green: #10b981;
+      --green-glow: rgba(16, 185, 129, 0.15);
+      --red: #ef4444;
+      --red-glow: rgba(239, 68, 68, 0.15);
+      --yellow: #f59e0b;
+      --yellow-glow: rgba(245, 158, 11, 0.15);
+      --purple: #8b5cf6;
+      --purple-glow: rgba(139, 92, 246, 0.15);
+      --cyan: #06b6d4;
+      --radius: 12px;
+      --radius-sm: 8px;
+      --shadow: 0 4px 24px rgba(0,0,0,0.3);
+      --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Inter', -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── Layout ─────────────────────────────────────────────── */
+    .app { display: flex; min-height: 100vh; }
+    .sidebar {
+      width: 260px;
+      background: var(--bg-card);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+      flex-shrink: 0;
+    }
+    .sidebar-header {
+      padding: 20px;
+      border-bottom: 1px solid var(--border);
+    }
+    .sidebar-header h1 {
+      font-size: 16px;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--accent), var(--purple));
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      letter-spacing: -0.3px;
+    }
+    .sidebar-header .subtitle {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-top: 4px;
+    }
+    .nav-section {
+      padding: 12px 12px 4px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-dim);
+    }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+      margin: 2px 8px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-muted);
+      transition: var(--transition);
+    }
+    .nav-item:hover { background: var(--bg-card-hover); color: var(--text); }
+    .nav-item.active { background: var(--accent-glow); color: var(--accent); }
+    .nav-item .icon { font-size: 16px; width: 20px; text-align: center; }
+    .nav-item .badge {
+      margin-left: auto;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      background: var(--bg);
+      color: var(--text-dim);
+      font-weight: 600;
+    }
+    .nav-item.active .badge { background: var(--accent-glow); color: var(--accent); }
+
+    /* Device indicators in sidebar */
+    .device-list { padding: 4px 12px 12px; }
+    .device-chip {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      margin: 2px 0;
+      border-radius: var(--radius-sm);
+      font-size: 12px;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: var(--transition);
+    }
+    .device-chip:hover { background: var(--bg-card-hover); }
+    .device-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-dim);
+      flex-shrink: 0;
+    }
+    .device-dot.online { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .device-dot.offline { background: var(--red); opacity: 0.5; }
+
+    .main {
+      flex: 1;
+      padding: 24px 32px;
+      overflow-y: auto;
+    }
+
+    /* ── Header Bar ─────────────────────────────────────────── */
+    .page-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+    }
+    .page-header h2 {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+    .page-header .actions { display: flex; gap: 8px; }
+
+    /* ── Search Bar ─────────────────────────────────────────── */
+    .search-bar {
+      position: relative;
+      margin-bottom: 20px;
+    }
+    .search-bar input {
+      width: 100%;
+      padding: 12px 16px 12px 42px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-size: 14px;
+      font-family: inherit;
+      transition: var(--transition);
+    }
+    .search-bar input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+    .search-bar input::placeholder { color: var(--text-dim); }
+    .search-bar .search-icon {
+      position: absolute;
+      left: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-dim);
+      font-size: 16px;
+    }
+
+    /* ── Cards / Tables ─────────────────────────────────────── */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      transition: var(--transition);
+    }
+    .card:hover { border-color: var(--border-hover); }
+    .card-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .card-header h3 { font-size: 14px; font-weight: 600; }
+    .card-body { padding: 16px 20px; }
+
+    .grid { display: grid; gap: 16px; }
+    .grid-2 { grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
+    .grid-3 { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+
+    .stat-card {
+      padding: 20px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      transition: var(--transition);
+    }
+    .stat-card:hover { border-color: var(--border-hover); transform: translateY(-1px); }
+    .stat-value { font-size: 28px; font-weight: 700; margin-bottom: 4px; }
+    .stat-label { font-size: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
+
+    /* ── Table ───────────────────────────────────────────────── */
+    .table-wrap { overflow-x: auto; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th {
+      padding: 10px 16px;
+      text-align: left;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-dim);
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+    }
+    td {
+      padding: 12px 16px;
+      font-size: 13px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+    tr:hover td { background: var(--bg-card-hover); }
+
+    .mono { font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+
+    /* ── Tags / Badges ──────────────────────────────────────── */
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .tag-blue { background: var(--accent-glow); color: var(--accent); }
+    .tag-green { background: var(--green-glow); color: var(--green); }
+    .tag-red { background: var(--red-glow); color: var(--red); }
+    .tag-yellow { background: var(--yellow-glow); color: var(--yellow); }
+    .tag-purple { background: var(--purple-glow); color: var(--purple); }
+    .tag-dim { background: rgba(100,116,139,0.1); color: var(--text-dim); }
+
+    /* ── Buttons ─────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 16px;
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      font-weight: 500;
+      font-family: inherit;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      color: var(--text-muted);
+      transition: var(--transition);
+    }
+    .btn:hover { border-color: var(--border-hover); color: var(--text); background: var(--bg-card-hover); }
+    .btn-primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: white;
+    }
+    .btn-primary:hover { background: #2563eb; }
+    .btn-sm { padding: 5px 10px; font-size: 12px; }
+    .btn-icon { padding: 6px 8px; }
+    .btn-vt {
+      background: linear-gradient(135deg, #10b981, #06b6d4);
+      border-color: transparent;
+      color: white;
+      font-weight: 600;
+    }
+    .btn-vt:hover { background: linear-gradient(135deg, #059669, #0891b2); color: white; }
+
+    /* ── Connect Command ────────────────────────────────────── */
+    .connect-box {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      color: var(--green);
+      cursor: pointer;
+      transition: var(--transition);
+    }
+    .connect-box:hover { border-color: var(--green); }
+    .connect-box .copy-icon { color: var(--text-dim); margin-left: auto; }
+
+    /* ── Modal ───────────────────────────────────────────────── */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      backdrop-filter: blur(4px);
+      z-index: 100;
+      justify-content: center;
+      align-items: center;
+    }
+    .modal-overlay.show { display: flex; }
+    .modal {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      width: 520px;
+      max-height: 80vh;
+      overflow-y: auto;
+      box-shadow: var(--shadow);
+    }
+    .modal-header {
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .modal-header h3 { font-size: 16px; font-weight: 600; }
+    .modal-body { padding: 20px 24px; }
+    .md-view {
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      font-size: 13px;
+      line-height: 1.5;
+      max-height: 120px;
+      overflow-y: auto;
+      cursor: pointer;
+      transition: max-height 0.2s;
+    }
+    .md-view:hover { border-color: var(--accent); }
+    .md-view pre { margin: 4px 0; }
+    .md-view code { font-size: 12px; }
+    .md-view strong { color: var(--text); }
+    .modal-footer {
+      padding: 16px 24px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    /* ── Form ────────────────────────────────────────────────── */
+    .form-group { margin-bottom: 16px; }
+    .form-group label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+    .form-group select,
+    .form-group input[type="text"] {
+      width: 100%;
+      padding: 10px 14px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      font-size: 14px;
+      font-family: inherit;
+      transition: var(--transition);
+    }
+    .form-group select:focus,
+    .form-group input[type="text"]:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+    .checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-muted);
+    }
+    .checkbox-label input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+    .select-with-search { position: relative; }
+    .select-with-search input[type="text"] {
+      margin-top: 6px;
+      font-size: 13px;
+    }
+
+    /* ── Searchable Repo Dropdown ──────────────────────────── */
+    .repo-dropdown { position: relative; }
+    .repo-dropdown-input {
+      width: 100%; padding: 9px 14px;
+      background: var(--bg-input); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); color: var(--text);
+      font-size: 13px; font-family: inherit;
+    }
+    .repo-dropdown-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+    .repo-dropdown-input::placeholder { color: var(--text-dim); }
+    .repo-dropdown-list {
+      display: none; position: absolute; z-index: 100;
+      top: 100%; left: 0; right: 0; max-height: 220px;
+      overflow-y: auto; background: var(--bg-card);
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      margin-top: 2px; box-shadow: 0 8px 24px rgba(0,0,0,.4);
+    }
+    .repo-dropdown.open .repo-dropdown-list { display: block; }
+    .repo-dropdown-item {
+      padding: 7px 14px; font-size: 13px; cursor: pointer;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      color: var(--text-muted);
+    }
+    .repo-dropdown-item:hover, .repo-dropdown-item.active {
+      background: var(--accent); color: #fff;
+    }
+    .repo-dropdown-empty {
+      padding: 12px 14px; font-size: 12px; color: var(--text-dim); text-align: center;
+    }
+
+    /* ── Org Management ────────────────────────────────────── */
+    .nav-section-header { display: flex; align-items: center; justify-content: space-between; }
+    .nav-section-header .nav-section { margin-bottom: 0; }
+    .org-add-btn {
+      background: none; border: 1px solid var(--border); color: var(--text-dim);
+      border-radius: var(--radius-sm); font-size: 12px; padding: 2px 8px;
+      cursor: pointer; transition: var(--transition);
+    }
+    .org-add-btn:hover { color: var(--accent); border-color: var(--accent); }
+    .org-add-form {
+      padding: 8px 12px; display: none;
+    }
+    .org-add-form input {
+      width: 100%; padding: 6px 10px; margin-bottom: 6px;
+      background: var(--bg-input); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); color: var(--text); font-size: 12px;
+    }
+    .org-add-form input:focus { outline: none; border-color: var(--accent); }
+    .org-add-form .org-form-btns { display: flex; gap: 4px; }
+    .org-add-form .org-form-btns button {
+      flex: 1; padding: 4px; font-size: 11px; border-radius: var(--radius-sm); cursor: pointer;
+    }
+    .org-add-form .org-form-btns .save-btn {
+      background: var(--accent); border: none; color: #fff;
+    }
+    .org-add-form .org-form-btns .cancel-btn {
+      background: none; border: 1px solid var(--border); color: var(--text-dim);
+    }
+    .org-delete-btn {
+      background: none; border: none; color: var(--text-dim); cursor: pointer;
+      font-size: 11px; padding: 0 4px; opacity: 0; transition: opacity .15s;
+    }
+    .nav-item:hover .org-delete-btn { opacity: 1; }
+    .org-delete-btn:hover { color: #f87171; }
+
+    /* ── Toast ───────────────────────────────────────────────── */
+    .toast-container {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 200;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .toast {
+      padding: 12px 20px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      box-shadow: var(--shadow);
+      animation: slideIn 0.3s ease;
+    }
+    .toast.success { border-left: 3px solid var(--green); }
+    .toast.error { border-left: 3px solid var(--red); }
+
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateX(20px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+
+    /* ── Empty state ─────────────────────────────────────────── */
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--text-dim);
+    }
+    .empty-state .icon { font-size: 48px; margin-bottom: 16px; opacity: 0.5; }
+    .empty-state p { font-size: 14px; margin-bottom: 16px; }
+
+    /* ── Loading ──────────────────────────────────────────────── */
+    .spinner {
+      width: 20px; height: 20px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Responsive ──────────────────────────────────────────── */
+    @media (max-width: 768px) {
+      .sidebar { display: none; }
+      .main { padding: 12px; padding-bottom: 72px; }
+      .grid-2 { grid-template-columns: 1fr; }
+      .grid-3 { grid-template-columns: 1fr; }
+      .page-header { flex-direction: column; gap: 8px; align-items: stretch; }
+      .page-header .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+      .page-header h2 { font-size: 18px; }
+      .modal { width: 95vw !important; max-width: 95vw !important; margin: 8px; }
+      .modal-body { max-height: 60vh; overflow-y: auto; }
+      .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+      table { font-size: 12px; }
+      table th, table td { padding: 8px 6px; white-space: nowrap; }
+      .card { border-radius: 8px; }
+      .btn { font-size: 12px; padding: 6px 10px; }
+      .btn-sm { font-size: 11px; padding: 4px 8px; }
+    }
+
+    /* ── Mobile Bottom Nav ─────────────────────────────────── */
+    .mobile-nav {
+      display: none;
+      position: fixed; bottom: 0; left: 0; right: 0;
+      background: var(--bg-card);
+      border-top: 1px solid var(--border);
+      padding: 4px 0 max(4px, env(safe-area-inset-bottom));
+      z-index: 1000;
+      justify-content: space-around;
+    }
+    @media (max-width: 768px) {
+      .mobile-nav { display: flex; }
+    }
+    .mobile-nav button {
+      background: none; border: none; color: var(--text-dim);
+      display: flex; flex-direction: column; align-items: center;
+      gap: 2px; font-size: 10px; padding: 6px 4px; cursor: pointer;
+      flex: 1; transition: color 0.2s;
+    }
+    .mobile-nav button .mnav-icon { font-size: 20px; line-height: 1; }
+    .mobile-nav button.active { color: var(--accent); }
+    .mobile-nav button:active { transform: scale(0.95); }
+
+    /* ── Mobile Device Bar ─────────────────────────────────── */
+    .mobile-device-bar {
+      display: none;
+      gap: 8px; padding: 8px 0; margin-bottom: 8px;
+    }
+    @media (max-width: 768px) {
+      .mobile-device-bar { display: flex; }
+    }
+    .mobile-device-bar select {
+      flex: 1; padding: 8px; background: var(--bg-input); color: var(--text);
+      border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <h1>⚡ TenAI</h1>
+      <div class="subtitle">Control Plane v3</div>
+      <select id="global-device-select" onchange="onGlobalDeviceChange(this.value)" style="width:100%;margin-top:8px;padding:6px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px;cursor:pointer">
+        <option value="" disabled>Select a device…</option>
+      </select>
+    </div>
+
+    <div class="nav-section">Views</div>
+    <div class="nav-item active" onclick="switchView('dashboard')" id="nav-dashboard">
+      <span class="icon">📊</span> Dashboard
+    </div>
+    <div class="nav-item" onclick="switchView('repos')" id="nav-repos">
+      <span class="icon">📦</span> Repos
+      <span class="badge" id="repo-count">0</span>
+    </div>
+    <div class="nav-item" onclick="switchView('devices')" id="nav-devices">
+      <span class="icon">🖥️</span> Devices
+      <span class="badge" id="device-count">0</span>
+    </div>
+    <div class="nav-item" onclick="switchView('jobs')" id="nav-jobs">
+      <span class="icon">⚙️</span> Jobs
+      <span class="badge" id="job-count">0</span>
+    </div>
+    <div class="nav-item" onclick="switchView('tasks')" id="nav-tasks">
+      <span class="icon">📋</span> Tasks
+      <span class="badge" id="task-count">0</span>
+    </div>
+    <div class="nav-item" onclick="switchView('settings')" id="nav-settings">
+      <span class="icon">⚙️</span> Settings
+    </div>
+
+    <div class="nav-section-header">
+      <div class="nav-section">Organizations</div>
+      <button class="org-add-btn" onclick="toggleOrgForm()" title="Add organization">+</button>
+    </div>
+    <div class="org-add-form" id="org-add-form">
+      <input type="text" id="org-add-name" placeholder="Org name (e.g. my-org)" />
+      <div class="org-form-btns">
+        <button class="save-btn" onclick="addOrg()">Add</button>
+        <button class="cancel-btn" onclick="toggleOrgForm()">Cancel</button>
+      </div>
+    </div>
+    <div id="org-nav-list"></div>
+
+    <div class="nav-section">Devices</div>
+    <div class="device-list" id="device-sidebar-list"></div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="main">
+    <!-- Mobile device/CLI bar (visible only on mobile) -->
+    <div class="mobile-device-bar">
+      <select id="mobile-device-select" onchange="onGlobalDeviceChange(this.value)">
+        <option value="" disabled>Device…</option>
+      </select>
+      <select id="mobile-cli-select" onchange="onMobileCLIChange(this.value)">
+        <option value="claude">Claude</option>
+        <option value="gemini">Gemini</option>
+        <option value="codex">Codex</option>
+      </select>
+    </div>
+
+    <!-- Dashboard View -->
+    <div id="view-dashboard">
+      <div class="page-header">
+        <h2>Dashboard</h2>
+        <div class="actions">
+          <button class="btn" onclick="pingAllDevices()">🔄 Ping All</button>
+          <button class="btn btn-primary" onclick="showNewJobModal()">+ New Job</button>
+        </div>
+      </div>
+
+      <div class="grid grid-3" style="margin-bottom: 24px;">
+        <div class="stat-card">
+          <div class="stat-value" id="stat-orgs">—</div>
+          <div class="stat-label">Organizations</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-repos">—</div>
+          <div class="stat-label">Repos</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-devices">—</div>
+          <div class="stat-label">Devices</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-jobs">—</div>
+          <div class="stat-label">Running Jobs</div>
+        </div>
+      </div>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <div class="card-header"><h3>Recent Jobs</h3></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Job</th><th>Device</th><th>Status</th><th>Connect</th></tr></thead>
+              <tbody id="dashboard-jobs"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>Device Status</h3></div>
+          <div class="card-body" id="dashboard-devices"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Repos View -->
+    <div id="view-repos" style="display:none">
+      <div class="page-header">
+        <h2>Repositories</h2>
+        <div class="actions">
+          <button class="btn" onclick="syncAllOrgs()">🔄 Sync All</button>
+          <button class="btn btn-primary" onclick="showCloneModal()">+ Clone Repo</button>
+        </div>
+      </div>
+
+      <div class="search-bar">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="repo-search" placeholder="Search repos by name or org..."
+               oninput="filterRepos(this.value)">
+      </div>
+
+      <div class="card">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Org</th><th>Repository</th><th>Branch</th><th>Description</th><th>Actions</th></tr>
+            </thead>
+            <tbody id="repos-table"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Devices View -->
+    <div id="view-devices" style="display:none">
+      <div class="page-header">
+        <h2>Devices</h2>
+        <div class="actions">
+          <button class="btn" onclick="pingAllDevices()">🔄 Ping All</button>
+        </div>
+      </div>
+      <div class="grid grid-2" id="devices-grid"></div>
+    </div>
+
+    <div id="view-jobs" style="display:none">
+      <div class="page-header">
+        <h2>Jobs</h2>
+        <div class="actions">
+          <div style="display:flex;gap:6px;align-items:center;margin-right:12px">
+            <button class="btn btn-sm job-filter-btn" data-filter="" onclick="filterJobs(this, '')">All</button>
+            <button class="btn btn-sm job-filter-btn active" data-filter="running" onclick="filterJobs(this, 'running')">Running</button>
+            <button class="btn btn-sm job-filter-btn" data-filter="completed" onclick="filterJobs(this, 'completed')">Completed</button>
+            <button class="btn btn-sm job-filter-btn" data-filter="failed" onclick="filterJobs(this, 'failed')">Failed</button>
+          </div>
+          <button class="btn btn-sm" id="batch-delete-jobs-btn" style="display:none;background:var(--red);color:#fff" onclick="batchDeleteJobs()">🗑 Delete Selected</button>
+          <button class="btn btn-primary" onclick="showNewJobModal()">+ New Job</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th style="width:30px"><input type="checkbox" id="job-check-all" onchange="toggleAllJobChecks(this)" /></th><th>ID</th><th>Device</th><th>Org/Repo</th><th>CLI</th><th>Status</th><th>Connect</th><th>Actions</th></tr></thead>
+            <tbody id="jobs-table"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div id="view-tasks" style="display:none">
+      <div class="page-header">
+        <h2>📋 Tasks</h2>
+        <div class="actions">
+          <button class="btn" onclick="loadTasksFromDB()" title="Refresh tasks">↻ Refresh</button>
+          <button class="btn btn-sm" id="batch-delete-tasks-btn" style="display:none;background:var(--red);color:#fff" onclick="batchDeleteTasks()">🗑 Delete Selected</button>
+          <select id="task-cli" style="padding:6px 10px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:13px">
+            <option value="claude" selected>Claude</option>
+            <option value="gemini">Gemini</option>
+            <option value="codex">Codex</option>
+          </select>
+          <button class="btn btn-primary" id="dispatch-selected-btn" onclick="dispatchSelectedTasks()" disabled>Dispatch Selected</button>
+        </div>
+      </div>
+      <!-- Filters -->
+      <div class="card" style="margin-bottom:16px;padding:16px">
+        <div style="display:flex;gap:12px;align-items:end;flex-wrap:wrap">
+          <div class="form-group" style="margin:0;flex:1;min-width:160px">
+            <label style="font-size:11px;margin-bottom:4px">Repository</label>
+            <select id="task-repo-select" onchange="loadTasksFromDB()"></select>
+          </div>
+          <div class="form-group" style="margin:0;flex:1;min-width:180px">
+            <label style="font-size:11px;margin-bottom:4px">Search</label>
+            <input id="task-search" type="text" placeholder="title, branch, description..."
+                   style="padding:8px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:13px;width:100%"
+                   oninput="debounceTaskSearch()" />
+          </div>
+          <div class="form-group" style="margin:0;min-width:80px">
+            <label style="font-size:11px;margin-bottom:4px">Per page</label>
+            <select id="task-per-page" onchange="taskPage=0;loadTasksFromDB()">
+              <option value="20">20</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;margin-top:12px">
+          <button class="btn btn-sm task-status-btn active" onclick="setTaskStatus(this,'')" data-status="">All</button>
+          <button class="btn btn-sm task-status-btn" onclick="setTaskStatus(this,'active')" data-status="active">○ Active</button>
+          <button class="btn btn-sm task-status-btn" onclick="setTaskStatus(this,'dispatched')" data-status="dispatched">◐ Dispatched</button>
+          <button class="btn btn-sm task-status-btn" onclick="setTaskStatus(this,'done')" data-status="done">● Done</button>
+          <button class="btn btn-sm task-status-btn" onclick="setTaskStatus(this,'failed')" data-status="failed">✗ Failed</button>
+        </div>
+      </div>
+      <!-- Table -->
+      <div class="card">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:30px"><input type="checkbox" id="task-check-all" onchange="toggleAllTaskChecks(this)" /></th>
+                <th>#</th><th>Status</th><th>Title</th><th>Branch</th><th>Repo</th><th>Context</th><th>Created</th>
+              </tr>
+            </thead>
+            <tbody id="tasks-table"></tbody>
+          </table>
+        </div>
+        <div id="task-pagination" style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-top:1px solid var(--border);font-size:13px;color:var(--text-muted)">
+          <span id="task-page-info"></span>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-sm" id="task-prev-btn" onclick="taskPage--;loadTasksFromDB()">← Prev</button>
+            <button class="btn btn-sm" id="task-next-btn" onclick="taskPage++;loadTasksFromDB()">Next →</button>
+          </div>
+        </div>
+      </div>
+      <div id="tasks-container"></div>
+    </div>
+
+    <!-- Task Detail/Edit Modal -->
+    <div class="modal-overlay" id="task-detail-modal">
+      <div class="modal" style="width:640px">
+        <div class="modal-header">
+          <h3 id="task-modal-title">Task Detail</h3>
+          <button class="btn btn-icon" onclick="closeModal('task-detail-modal')">✕</button>
+        </div>
+        <div class="modal-body" id="task-modal-body"></div>
+        <div class="modal-footer" id="task-modal-footer"></div>
+      </div>
+    </div>
+
+    <!-- Settings View -->
+    <div id="view-settings" style="display:none">
+      <div class="page-header">
+        <h2>⚙️ Settings</h2>
+        <div class="actions">
+          <button class="btn" onclick="resetSettings()">🗑 Reset All</button>
+          <button class="btn btn-primary" onclick="saveSettings()">💾 Save</button>
+        </div>
+      </div>
+      <div class="card" style="max-width:600px;padding:24px">
+        <div class="form-group" style="margin-bottom:16px">
+          <label for="settings-default-device" style="font-weight:600;margin-bottom:6px;display:block">Default Device</label>
+          <select id="settings-default-device" style="width:100%;padding:8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-sm)">
+            <option value="" disabled>Select…</option>
+          </select>
+          <div style="font-size:12px;color:var(--text-dim);margin-top:4px">Device used for all data queries. Required.</div>
+        </div>
+        <div class="form-group" style="margin-bottom:16px">
+          <label for="settings-default-cli" style="font-weight:600;margin-bottom:6px;display:block">Default CLI Agent</label>
+          <select id="settings-default-cli" style="width:100%;padding:8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-sm)">
+            <option value="claude">Claude Code</option>
+            <option value="gemini">Gemini CLI</option>
+            <option value="codex">Codex CLI</option>
+          </select>
+          <div style="font-size:12px;color:var(--text-dim);margin-top:4px">CLI agent for dispatch operations.</div>
+        </div>
+        <div id="settings-status" style="margin-top:12px;font-size:13px"></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- New Job Modal -->
+<div class="modal-overlay" id="job-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Launch New Job</h3>
+      <button class="btn btn-icon" onclick="closeModal('job-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Device</label>
+        <select id="job-device"></select>
+      </div>
+      <div class="form-group">
+        <label>Organization</label>
+        <select id="job-org" onchange="loadOrgRepos(this.value)">
+          <option value="">— Select org —</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Repository</label>
+        <div class="repo-dropdown" id="job-repo-dropdown">
+          <input type="text" class="repo-dropdown-input" id="job-repo-input"
+                 placeholder="— Select org first —" autocomplete="off"
+                 onfocus="openRepoDropdown('job')" oninput="filterRepoDropdown('job')" />
+          <input type="hidden" id="job-repo" />
+          <div class="repo-dropdown-list" id="job-repo-list"></div>
+        </div>
+        <div id="job-repo-loading" style="display:none;margin-top:6px;font-size:12px;color:var(--text-dim)">⏳ Syncing repos from GitHub...</div>
+      </div>
+      <div class="form-group">
+        <label>Action</label>
+        <select id="job-action" onchange="toggleJobFields()">
+          <option value="shell">🖥 Interactive Shell (auto-clones repo)</option>
+          <option value="conductor">🤖 Start Conductor (auto-clones repo)</option>
+          <option value="dispatch">🚀 Dispatch Agent (auto-clones repo)</option>
+          <option value="clone">📦 Clone Repo Only</option>
+          <option value="pull">⬇ Pull Repo Only</option>
+        </select>
+      </div>
+      <div class="form-group" id="job-cli-group">
+        <label>CLI Agent</label>
+        <select id="job-cli">
+          <option value="claude">Claude Code</option>
+          <option value="gemini">Gemini CLI</option>
+          <option value="codex">Codex CLI</option>
+        </select>
+      </div>
+      <div class="form-group" id="job-branch-group">
+        <label>Branch</label>
+        <select id="job-branch"><option value="">— Select repo first —</option></select>
+        <div id="job-branch-loading" style="display:none;margin-top:6px;font-size:12px;color:var(--text-dim)">⏳ Fetching branches...</div>
+      </div>
+      <div class="form-group" id="job-pull-group">
+        <label class="checkbox-label">
+          <input type="checkbox" id="job-pull-latest" checked>
+          Pull latest code (if repo already cloned)
+        </label>
+      </div>
+      <div class="form-group" id="job-task-group">
+        <label>Task Description</label>
+        <input type="text" id="job-task" placeholder="Implement the authentication module...">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('job-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitJob()">🚀 Launch</button>
+    </div>
+  </div>
+</div>
+
+<!-- Clone Modal -->
+<div class="modal-overlay" id="clone-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Clone Repository</h3>
+      <button class="btn btn-icon" onclick="closeModal('clone-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Device</label>
+        <select id="clone-device"></select>
+      </div>
+      <div class="form-group">
+        <label>Organization</label>
+        <select id="clone-org" onchange="loadCloneOrgRepos(this.value)"></select>
+      </div>
+      <div class="form-group">
+        <label>Repository</label>
+        <div class="repo-dropdown" id="clone-repo-dropdown">
+          <input type="text" class="repo-dropdown-input" id="clone-repo-input"
+                 placeholder="— Select org first —" autocomplete="off"
+                 onfocus="openRepoDropdown('clone')" oninput="filterRepoDropdown('clone')" />
+          <input type="hidden" id="clone-repo" />
+          <div class="repo-dropdown-list" id="clone-repo-list"></div>
+        </div>
+        <div id="clone-repo-loading" style="display:none;margin-top:6px;font-size:12px;color:var(--text-dim)">⏳ Syncing repos from GitHub...</div>
+      </div>
+      <div class="form-group">
+        <label>Branch</label>
+        <select id="clone-branch"><option value="">— Select repo first —</option></select>
+        <div id="clone-branch-loading" style="display:none;margin-top:6px;font-size:12px;color:var(--text-dim)">⏳ Fetching branches...</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('clone-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitClone()">Clone</button>
+    </div>
+  </div>
+</div>
+
+<!-- Job Detail Modal -->
+<div class="modal-overlay" id="job-detail-modal">
+  <div class="modal" style="max-width:600px">
+    <div class="modal-header">
+      <h3 id="job-detail-title">Job Detail</h3>
+      <button class="btn btn-icon" onclick="closeModal('job-detail-modal')">✕</button>
+    </div>
+    <div class="modal-body" id="job-detail-body" style="font-size:13px">
+      <div style="color:var(--text-dim)">Loading...</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('job-detail-modal')">Close</button>
+    </div>
+  </div>
+</div>
+
+
+
+<!-- Mobile Bottom Navigation -->
+<nav class="mobile-nav" id="mobile-nav">
+  <button onclick="switchView('dashboard')" id="mnav-dashboard" class="active">
+    <span class="mnav-icon">📊</span>Home
+  </button>
+  <button onclick="switchView('tasks')" id="mnav-tasks">
+    <span class="mnav-icon">📋</span>Tasks
+  </button>
+  <button onclick="switchView('jobs')" id="mnav-jobs">
+    <span class="mnav-icon">⚙️</span>Jobs
+  </button>
+  <button onclick="switchView('devices')" id="mnav-devices">
+    <span class="mnav-icon">🖥️</span>Devices
+  </button>
+  <button onclick="switchView('settings')" id="mnav-settings">
+    <span class="mnav-icon">🔧</span>Settings
+  </button>
+</nav>
+
+<div class="toast-container" id="toasts"></div>
+
+<script>
+// ── State ────────────────────────────────────────────────
+let state = { orgs: [], repos: [], devices: [], jobs: [] };
+let activeDevice = ''; // global device scope
+const API = '/api';
+
+function deviceQuery() {
+  return activeDevice ? `device=${encodeURIComponent(activeDevice)}` : '';
+}
+function appendDevice(path) {
+  const dq = deviceQuery();
+  if (!dq) return path;
+  return path.includes('?') ? `${path}&${dq}` : `${path}?${dq}`;
+}
+
+// ── API helpers ──────────────────────────────────────────
+async function api(path, opts = {}) {
+  try {
+    const res = await fetch(API + path, {
+      headers: { 'Content-Type': 'application/json' },
+      ...opts,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (e) {
+    toast(e.message, 'error');
+    throw e;
+  }
+}
+
+// ── Toast ────────────────────────────────────────────────
+function toast(msg, type = 'success') {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  document.getElementById('toasts').appendChild(el);
+  setTimeout(() => el.remove(), 4000);
+}
+
+// ── Navigation ───────────────────────────────────────────
+function switchView(view) {
+  ['dashboard', 'repos', 'devices', 'jobs', 'tasks', 'settings'].forEach(v => {
+    const el = document.getElementById(`view-${v}`);
+    const nav = document.getElementById(`nav-${v}`);
+    if (el) el.style.display = v === view ? '' : 'none';
+    if (nav) nav.classList.toggle('active', v === view);
+  });
+  // Mobile bottom nav — map repos to dashboard tab
+  const mobileMap = { repos: 'dashboard' };
+  const mobileTab = mobileMap[view] || view;
+  ['dashboard', 'tasks', 'jobs', 'devices', 'settings'].forEach(v => {
+    const btn = document.getElementById(`mnav-${v}`);
+    if (btn) btn.classList.toggle('active', v === mobileTab);
+  });
+  if (view === 'repos') loadRepos();
+  if (view === 'devices') loadDevices();
+  if (view === 'jobs') loadJobs();
+  if (view === 'tasks') loadTaskRepos();
+  if (view === 'settings') loadSettings();
+}
+
+// ── Modal helpers ────────────────────────────────────────
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+function showModal(id) { document.getElementById(id).classList.add('show'); }
+
+function showNewJobModal() {
+  populateSelects();
+  toggleJobFields();
+  // Reset searchable repo dropdown and branch
+  document.getElementById('job-repo').value = '';
+  document.getElementById('job-repo-input').value = '';
+  document.getElementById('job-repo-input').placeholder = '— Select org first —';
+  document.getElementById('job-repo-list').innerHTML = '';
+  document.getElementById('job-repo-dropdown').classList.remove('open');
+  _repoCache.job = [];
+  document.getElementById('job-branch').innerHTML = '<option value="">— Select repo first —</option>';
+  showModal('job-modal');
+}
+
+function showCloneModal() {
+  populateSelects();
+  // Reset searchable repo dropdown and branch
+  document.getElementById('clone-repo').value = '';
+  document.getElementById('clone-repo-input').value = '';
+  document.getElementById('clone-repo-input').placeholder = '— Select org first —';
+  document.getElementById('clone-repo-list').innerHTML = '';
+  document.getElementById('clone-repo-dropdown').classList.remove('open');
+  _repoCache.clone = [];
+  document.getElementById('clone-branch').innerHTML = '<option value="">— Select repo first —</option>';
+  showModal('clone-modal');
+}
+
+function populateSelects() {
+  // Devices — prefer online first
+  const sorted = [...state.devices].sort((a, b) => (b.online ? 1 : 0) - (a.online ? 1 : 0));
+  const devHtml = sorted.map(d =>
+    `<option value="${d.name}">${d.name} (${d.type})${d.online ? ' ✓' : ''}</option>`
+  ).join('');
+  ['job-device', 'clone-device'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = devHtml;
+  });
+
+  // Orgs
+  const orgHtml = '<option value="">— Select org —</option>' +
+    state.orgs.map(o => `<option value="${o.name}">${o.name}</option>`).join('');
+  ['job-org', 'clone-org'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = orgHtml;
+  });
+}
+
+function toggleJobFields() {
+  const action = document.getElementById('job-action').value;
+  const showCli = action === 'dispatch';
+  const showBranch = ['dispatch', 'clone', 'shell', 'conductor'].includes(action);
+  const showTask = action === 'dispatch';
+  const showPull = ['shell', 'conductor', 'dispatch'].includes(action);
+  document.getElementById('job-cli-group').style.display = showCli ? '' : 'none';
+  document.getElementById('job-branch-group').style.display = showBranch ? '' : 'none';
+  document.getElementById('job-task-group').style.display = showTask ? '' : 'none';
+  document.getElementById('job-pull-group').style.display = showPull ? '' : 'none';
+}
+
+// ── Dynamic repo loading (syncs from GitHub) ─────────────
+// Stores loaded repos per prefix for search
+const _repoCache = { job: [], clone: [] };
+
+async function loadOrgRepos(org) { await _loadOrgReposFor('job', org); }
+async function loadCloneOrgRepos(org) { await _loadOrgReposFor('clone', org); }
+
+async function _loadOrgReposFor(prefix, org) {
+  const input = document.getElementById(`${prefix}-repo-input`);
+  const hidden = document.getElementById(`${prefix}-repo`);
+  const loading = document.getElementById(`${prefix}-repo-loading`);
+  const list = document.getElementById(`${prefix}-repo-list`);
+  const branchSel = document.getElementById(`${prefix}-branch`);
+  hidden.value = ''; input.value = '';
+  branchSel.innerHTML = '<option value="">— Select repo first —</option>';
+  _repoCache[prefix] = [];
+  list.innerHTML = '';
+  if (!org) { input.placeholder = '— Select org first —'; return; }
+
+  const device = document.getElementById(`${prefix}-device`).value;
+  if (!device) { input.placeholder = '— Select device first —'; return; }
+
+  input.placeholder = 'Loading repos...';
+  loading.style.display = '';
+  try {
+    await api(`/orgs/${org}/sync?device=${device}`, { method: 'POST' });
+    const data = await api(`/orgs/${org}/repos`);
+    const repos = data.repos || [];
+    _repoCache[prefix] = repos;
+    input.placeholder = `Search ${repos.length} repos...`;
+    renderRepoDropdown(prefix, repos);
+  } catch {
+    input.placeholder = 'Error loading repos';
+  } finally {
+    loading.style.display = 'none';
+  }
+}
+
+function renderRepoDropdown(prefix, repos) {
+  const list = document.getElementById(`${prefix}-repo-list`);
+  if (repos.length === 0) {
+    list.innerHTML = '<div class="repo-dropdown-empty">No repos found</div>';
+    return;
+  }
+  list.innerHTML = repos.map(r =>
+    `<div class="repo-dropdown-item" data-name="${r.name}" onclick="selectRepo('${prefix}', '${r.name}')">${r.name}</div>`
+  ).join('');
+}
+
+function openRepoDropdown(prefix) {
+  document.getElementById(`${prefix}-repo-dropdown`).classList.add('open');
+  filterRepoDropdown(prefix);
+}
+
+function filterRepoDropdown(prefix) {
+  const q = document.getElementById(`${prefix}-repo-input`).value.toLowerCase();
+  const filtered = _repoCache[prefix].filter(r => r.name.toLowerCase().includes(q));
+  renderRepoDropdown(prefix, filtered);
+  document.getElementById(`${prefix}-repo-dropdown`).classList.add('open');
+}
+
+function selectRepo(prefix, name) {
+  document.getElementById(`${prefix}-repo`).value = name;
+  document.getElementById(`${prefix}-repo-input`).value = name;
+  document.getElementById(`${prefix}-repo-dropdown`).classList.remove('open');
+  // Trigger branch loading
+  const org = document.getElementById(`${prefix}-org`).value;
+  loadRepoBranches(org, name, `${prefix}-branch`, `${prefix}-branch-loading`);
+}
+
+// Close dropdowns on outside click
+document.addEventListener('click', (e) => {
+  ['job', 'clone'].forEach(prefix => {
+    const dd = document.getElementById(`${prefix}-repo-dropdown`);
+    if (dd && !dd.contains(e.target)) dd.classList.remove('open');
+  });
+});
+
+// ── Org management ───────────────────────────────────────
+function toggleOrgForm() {
+  const form = document.getElementById('org-add-form');
+  form.style.display = form.style.display === 'none' ? 'block' : 'none';
+  if (form.style.display === 'block') document.getElementById('org-add-name').focus();
+}
+
+async function addOrg() {
+  const name = document.getElementById('org-add-name').value.trim();
+  if (!name) return;
+  try {
+    await api('/orgs', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ name }) });
+    document.getElementById('org-add-name').value = '';
+    document.getElementById('org-add-form').style.display = 'none';
+    showToast(`Organization '${name}' added`, 'success');
+    loadDashboard();
+  } catch { showToast('Failed to add org', 'error'); }
+}
+
+async function deleteOrg(name, event) {
+  event.stopPropagation();
+  if (!confirm(`Remove organization "${name}" and all its repos from the database?`)) return;
+  try {
+    await api(`/orgs/${name}`, { method: 'DELETE' });
+    showToast(`Organization '${name}' removed`, 'success');
+    loadDashboard();
+  } catch { showToast('Failed to remove org', 'error'); }
+}
+
+// ── Dynamic branch loading ───────────────────────────────
+async function loadRepoBranches(org, repo, selectId, loadingId) {
+  const sel = document.getElementById(selectId);
+  const loading = document.getElementById(loadingId);
+  sel.innerHTML = '<option value="">— Loading branches —</option>';
+  if (!org || !repo) { sel.innerHTML = '<option value="">— Select repo first —</option>'; return; }
+
+  const deviceId = selectId === 'job-branch' ? 'job-device' : 'clone-device';
+  const device = document.getElementById(deviceId).value;
+  if (!device) { sel.innerHTML = '<option value="">— Select device first —</option>'; return; }
+
+  loading.style.display = '';
+  try {
+    const data = await api(`/repos/${org}/${repo}/branches?device=${device}`);
+    const branches = data.branches || [];
+    const defaultBranch = data.default || 'main';
+    if (branches.length === 0) {
+      sel.innerHTML = `<option value="${defaultBranch}">${defaultBranch} (default)</option>`;
+    } else {
+      sel.innerHTML = branches.map(b =>
+        `<option value="${b}"${b === defaultBranch ? ' selected' : ''}>${b}${b === defaultBranch ? ' (default)' : ''}</option>`
+      ).join('');
+    }
+  } catch {
+    sel.innerHTML = '<option value="main">main (fallback)</option>';
+  } finally {
+    loading.style.display = 'none';
+  }
+}
+
+// onJobRepoChange / onCloneRepoChange handled by selectRepo()
+
+// ── Data loaders ─────────────────────────────────────────
+async function loadDashboard() {
+  try {
+    const [statusData, orgsData, reposData, devicesData, jobsData] = await Promise.all([
+      api('/status'), api(appendDevice('/orgs')), api(appendDevice('/repos')), api('/devices/refresh'), api(appendDevice('/jobs?limit=10')),
+    ]);
+
+    state.orgs = orgsData.orgs || [];
+    state.repos = reposData.repos || [];
+    state.devices = devicesData.devices || [];
+    state.jobs = jobsData.jobs || [];
+
+    // Stats
+    document.getElementById('stat-orgs').textContent = state.orgs.length;
+    document.getElementById('stat-repos').textContent = state.repos.length;
+    document.getElementById('stat-devices').textContent = state.devices.length;
+    document.getElementById('stat-jobs').textContent = statusData.running_jobs || 0;
+
+    // Badges
+    document.getElementById('repo-count').textContent = state.repos.length;
+    document.getElementById('device-count').textContent = state.devices.length;
+    document.getElementById('job-count').textContent = statusData.running_jobs || 0;
+    document.getElementById('task-count').textContent = statusData.total_tasks || 0;
+
+    // Org sidebar
+    document.getElementById('org-nav-list').innerHTML = state.orgs.map(o =>
+      `<div class="nav-item" onclick="switchView('repos'); document.getElementById('repo-search').value='${o.name}'; filterRepos('${o.name}')">
+        <span class="icon">🏢</span> ${o.name}
+        <span class="badge">${o.repo_count || 0}</span>
+        <button class="org-delete-btn" onclick="deleteOrg('${o.name}', event)" title="Remove org">✕</button>
+      </div>`
+    ).join('');
+
+    // Device sidebar
+    document.getElementById('device-sidebar-list').innerHTML = state.devices.map(d =>
+      `<div class="device-chip" onclick="switchView('devices')">
+        <span class="device-dot ${d.online ? 'online' : 'offline'}"></span>
+        ${d.name} <span style="color:var(--text-dim);font-size:11px">${d.type}</span>
+      </div>`
+    ).join('');
+
+    // Update global device selector
+    populateGlobalDeviceSelector();
+
+    // Dashboard recent jobs
+    document.getElementById('dashboard-jobs').innerHTML = state.jobs.length
+      ? state.jobs.slice(0, 5).map(j => `
+          <tr style="cursor:pointer" onclick="showJobDetail(${j.id})">
+            <td><span class="mono">#${j.id}</span> ${j.org ? j.org + '/' : ''}${j.repo || ''}</td>
+            <td>${j.device}</td>
+            <td>${statusTag(j.status)}</td>
+            <td>${j.vt_url ? `<button class="btn btn-sm btn-vt" onclick="event.stopPropagation(); window.open('${j.vt_url}', '_blank')" title="Open terminal in VibeTunnel">🖥 Terminal</button>` : j.status === 'running' && j.tmux_session ? `<button class="btn btn-sm btn-vt" style="opacity:0.7" onclick="event.stopPropagation(); attachVT(${j.id})" title="Attach VibeTunnel to tmux session">📎 Attach</button>` : j.connect_cmd ? `<div class="connect-box" onclick="event.stopPropagation(); copyText('${j.connect_cmd}')">${truncate(j.connect_cmd, 30)} <span class="copy-icon">📋</span></div>` : '—'}</td>
+          </tr>
+        `).join('')
+      : '<tr><td colspan="4" style="text-align:center;color:var(--text-dim);padding:24px">No jobs yet</td></tr>';
+
+    // Dashboard devices
+    document.getElementById('dashboard-devices').innerHTML = state.devices.map(d => `
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
+        <span class="device-dot ${d.online ? 'online' : 'offline'}"></span>
+        <span style="font-weight:500">${d.name}</span>
+        <span class="tag tag-dim">${d.type}</span>
+        <span style="margin-left:auto;font-size:12px;color:var(--text-dim)">${d.ip}</span>
+      </div>
+    `).join('');
+
+  } catch (e) {
+    console.error('Dashboard load error:', e);
+  }
+}
+
+async function loadRepos() {
+  try {
+    const data = await api('/repos');
+    state.repos = data.repos || [];
+    renderRepos(state.repos);
+  } catch {}
+}
+
+function renderRepos(repos) {
+  document.getElementById('repos-table').innerHTML = repos.length
+    ? repos.map(r => `
+        <tr>
+          <td><span class="tag tag-blue">${r.org}</span></td>
+          <td><span style="font-weight:500">${r.name}</span></td>
+          <td><span class="mono">${r.default_branch}</span></td>
+          <td style="color:var(--text-dim);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.description || ''}</td>
+          <td>
+            <button class="btn btn-sm" onclick="launchQuickJob('pull', '${r.org}', '${r.name}')">Pull</button>
+            <button class="btn btn-sm" onclick="launchQuickJob('conductor', '${r.org}', '${r.name}')">Conductor</button>
+          </td>
+        </tr>
+      `).join('')
+    : '<tr><td colspan="5" class="empty-state"><p>No repos synced yet. Click "Sync All" to discover repos from your organizations.</p></td></tr>';
+}
+
+function filterRepos(query) {
+  const q = query.toLowerCase();
+  const filtered = state.repos.filter(r =>
+    r.name.toLowerCase().includes(q) || r.org.toLowerCase().includes(q)
+  );
+  renderRepos(filtered);
+}
+
+async function loadDevices() {
+  try {
+    const data = await api('/devices');
+    state.devices = data.devices || [];
+    document.getElementById('devices-grid').innerHTML = state.devices.map(d => {
+      const caps = (d.capabilities || []).map(c =>
+        `<span class="tag tag-purple">${c}</span>`
+      ).join(' ');
+      return `
+        <div class="card">
+          <div class="card-header">
+            <h3>
+              <span class="device-dot ${d.online ? 'online' : 'offline'}" style="display:inline-block;margin-right:8px"></span>
+              ${d.name}
+            </h3>
+            <span class="tag ${d.online ? 'tag-green' : 'tag-red'}">${d.online ? 'Online' : 'Offline'}</span>
+          </div>
+          <div class="card-body">
+            <div style="margin-bottom:12px">
+              <div style="font-size:12px;color:var(--text-dim);margin-bottom:4px">Connection</div>
+              <div class="mono">${d.user}@${d.ip}</div>
+            </div>
+            <div style="margin-bottom:12px">
+              <div style="font-size:12px;color:var(--text-dim);margin-bottom:4px">Type</div>
+              <span class="tag tag-dim">${d.type}</span>
+            </div>
+            <div style="margin-bottom:12px">
+              <div style="font-size:12px;color:var(--text-dim);margin-bottom:4px">Capabilities</div>
+              <div style="display:flex;flex-wrap:wrap;gap:4px">${caps || '<span style="color:var(--text-dim)">none</span>'}</div>
+            </div>
+            <div style="display:flex;gap:6px;margin-top:16px">
+              <button class="btn btn-sm" onclick="pingDevice('${d.name}')">Ping</button>
+              <button class="btn btn-sm" onclick="viewDeviceDetail('${d.name}')">Details</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch {}
+}
+
+let _jobFilter = 'running';
+function filterJobs(btn, status) {
+  document.querySelectorAll('.job-filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  _jobFilter = status;
+  loadJobs();
+}
+function toggleAllJobChecks(master) {
+  document.querySelectorAll('.job-check').forEach(c => { c.checked = master.checked; });
+  updateJobBatchBtn();
+}
+function updateJobBatchBtn() {
+  const checked = document.querySelectorAll('.job-check:checked').length;
+  const btn = document.getElementById('batch-delete-jobs-btn');
+  btn.style.display = checked > 0 ? '' : 'none';
+  btn.textContent = `🗑 Delete Selected (${checked})`;
+}
+async function batchDeleteJobs() {
+  const ids = [...document.querySelectorAll('.job-check:checked')].map(c => c.dataset.id);
+  if (!ids.length || !confirm(`Delete ${ids.length} job(s)?`)) return;
+  for (const id of ids) {
+    try { await api(`/jobs/${id}`, { method: 'DELETE' }); } catch {}
+  }
+  toast(`Deleted ${ids.length} job(s)`);
+  loadJobs();
+  loadDashboard();
+}
+async function loadJobs() {
+  try {
+    const qs = _jobFilter ? `?limit=50&status=${_jobFilter}` : '?limit=50';
+    const data = await api('/jobs' + qs);
+    state.jobs = data.jobs || [];
+    document.getElementById('jobs-table').innerHTML = state.jobs.length
+      ? state.jobs.map(j => `
+          <tr style="cursor:pointer" onclick="showJobDetail(${j.id})">
+            <td onclick="event.stopPropagation()"><input type="checkbox" class="job-check" data-id="${j.id}" onchange="updateJobBatchBtn()" /></td>
+            <td><span class="mono">#${j.id}</span></td>
+            <td>${j.device}</td>
+            <td>${j.org ? j.org + '/' : ''}${j.repo || '—'}</td>
+            <td>${j.cli ? `<span class="tag tag-purple">${j.cli}</span>` : '—'}</td>
+            <td>${statusTag(j.status)}</td>
+            <td>${j.vt_url ? `<button class="btn btn-sm btn-vt" onclick="event.stopPropagation(); window.open('${j.vt_url}', '_blank')" title="Open terminal in VibeTunnel">🖥 Terminal</button>` : j.status === 'running' && j.tmux_session ? `<button class="btn btn-sm btn-vt" style="opacity:0.7" onclick="event.stopPropagation(); attachVT(${j.id})" title="Attach VibeTunnel">📎 Attach</button>` : j.connect_cmd ? `<div class="connect-box" onclick="event.stopPropagation(); copyText('${j.connect_cmd}')">${truncate(j.connect_cmd, 35)} <span class="copy-icon">📋</span></div>` : '—'}</td>
+            <td>
+              ${j.status === 'running' ? `<button class="btn btn-sm" onclick="event.stopPropagation(); killJob(${j.id})">Kill</button>` : `<button class="btn btn-sm" style="opacity:0.6" onclick="event.stopPropagation(); deleteJob(${j.id})" title="Delete job">🗑</button>`}
+            </td>
+          </tr>
+        `).join('')
+      : '<tr><td colspan="8" style="text-align:center;color:var(--text-dim);padding:24px">No jobs match filter</td></tr>';
+    document.getElementById('job-check-all').checked = false;
+    updateJobBatchBtn();
+  } catch {}
+}
+
+async function deleteJob(id) {
+  if (!confirm(`Delete job #${id}?`)) return;
+  try {
+    await api(`/jobs/${id}`, { method: 'DELETE' });
+    toast(`Job #${id} deleted`);
+    loadJobs();
+  } catch { toast('Delete failed', 'error'); }
+}
+
+// ── Actions ──────────────────────────────────────────────
+async function submitJob() {
+  const payload = {
+    device: document.getElementById('job-device').value,
+    org: document.getElementById('job-org').value,
+    repo: document.getElementById('job-repo').value,
+    action: document.getElementById('job-action').value,
+    cli: document.getElementById('job-cli').value,
+    branch: document.getElementById('job-branch').value,
+    task: document.getElementById('job-task').value,
+    pull_latest: document.getElementById('job-pull-latest').checked,
+  };
+  closeModal('job-modal');
+  toast(`Launching ${payload.action} on ${payload.device}...`);
+  try {
+    const result = await api('/jobs', { method: 'POST', body: JSON.stringify(payload) });
+    if (result.ok) {
+      toast(`Job #${result.job_id} launched on ${payload.device}`);
+      if (result.vt_url) {
+        toast('🖥 Terminal ready — click the Terminal button to open', 'success');
+      } else if (result.connect_cmd) {
+        toast(`Connect: ${result.connect_cmd}`, 'success');
+        copyText(result.connect_cmd);
+      }
+    } else {
+      toast(`Job failed: ${result.stderr || 'unknown error'}`, 'error');
+    }
+    loadDashboard();
+  } catch {}
+}
+
+async function submitClone() {
+  const payload = {
+    org: document.getElementById('clone-org').value,
+    repo: document.getElementById('clone-repo').value,
+    device: document.getElementById('clone-device').value,
+    branch: document.getElementById('clone-branch').value || '',
+  };
+  closeModal('clone-modal');
+  toast(`Cloning ${payload.org}/${payload.repo}...`);
+  try {
+    const result = await api('/repos/clone', { method: 'POST', body: JSON.stringify(payload) });
+    toast(result.ok ? `Cloned ${payload.org}/${payload.repo}` : `Clone failed: ${result.stderr}`, result.ok ? 'success' : 'error');
+  } catch {}
+}
+
+async function syncAllOrgs() {
+  toast('Syncing all orgs...');
+  const device = state.devices.length ? state.devices[0].name : '';
+  if (!device) { toast('No devices available', 'error'); return; }
+  for (const org of state.orgs) {
+    try {
+      const result = await api(`/orgs/${org.name}/sync?device=${device}`, { method: 'POST' });
+      toast(`Synced ${org.name}: ${result.repos_synced} repos`);
+    } catch {}
+  }
+  loadRepos();
+}
+
+async function pingDevice(name) {
+  toast(`Pinging ${name}...`);
+  try {
+    const result = await api(`/devices/${name}/ping`, { method: 'POST' });
+    toast(result.online ? `${name} is online` : `${name} is offline`, result.online ? 'success' : 'error');
+    loadDashboard();
+  } catch {}
+}
+
+async function showJobDetail(jobId) {
+  showModal('job-detail-modal');
+  const body = document.getElementById('job-detail-body');
+  body.innerHTML = '<div style="color:var(--text-dim)">Loading...</div>';
+  try {
+    const job = await api(`/jobs/${jobId}`);
+    const logs = (job.logs || []).map(l => `<div style="padding:4px 0;border-bottom:1px solid var(--border)">${escapeHtml(l.line)}<span style="float:right;font-size:11px;color:var(--text-dim)">${l.timestamp || ''}</span></div>`).join('');
+    document.getElementById('job-detail-title').textContent = `Job #${job.id} — ${job.org || ''}${job.org ? '/' : ''}${job.repo || 'custom'}`;
+    body.innerHTML = `
+      <div style="display:grid;grid-template-columns:auto 1fr;gap:8px 16px;margin-bottom:16px">
+        <span style="color:var(--text-dim)">Status</span> <span>${statusTag(job.status)}</span>
+        <span style="color:var(--text-dim)">Device</span> <span>${job.device}</span>
+        <span style="color:var(--text-dim)">Started</span> <span class="mono">${job.started_at || '—'}</span>
+        ${job.tmux_session ? `<span style="color:var(--text-dim)">Session</span> <span class="mono">${job.tmux_session}</span>` : ''}
+        ${job.vt_url ? `<span style="color:var(--text-dim)">Terminal</span> <span><button class="btn btn-sm btn-vt" onclick="window.open('${job.vt_url}', '_blank')">🖥 Open in VibeTunnel</button></span>` : job.status === 'running' && job.tmux_session ? `<span style="color:var(--text-dim)">Terminal</span> <span><button class="btn btn-sm btn-vt" style="opacity:0.7" onclick="attachVT(${job.id})">📎 Attach VibeTunnel</button></span>` : ''}
+        ${job.connect_cmd ? `<span style="color:var(--text-dim)">Connect</span> <div class="connect-box" onclick="copyText('${job.connect_cmd}')" style="cursor:pointer">${job.connect_cmd} <span class="copy-icon">📋</span></div>` : ''}
+      </div>
+      <div style="margin-bottom:12px">
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:6px;font-weight:600">Command</div>
+        <pre style="background:var(--bg-input);padding:10px;border-radius:var(--radius-sm);font-size:12px;white-space:pre-wrap;word-break:break-all;max-height:150px;overflow-y:auto">${escapeHtml(job.command || '')}</pre>
+      </div>
+      ${logs ? `<div><div style="font-size:12px;color:var(--text-dim);margin-bottom:6px;font-weight:600">Logs</div><div style="background:var(--bg-input);padding:10px;border-radius:var(--radius-sm);max-height:200px;overflow-y:auto;font-family:var(--font-mono);font-size:12px">${logs}</div></div>` : ''}
+    `;
+  } catch { body.innerHTML = '<div style="color:#f87171">Failed to load job details</div>'; }
+}
+
+function escapeHtml(s) {
+  const d = document.createElement('div'); d.textContent = s; return d.innerHTML;
+}
+
+async function pingAllDevices() {
+  toast('Pinging all devices...');
+  try {
+    await api('/devices/ping-all', { method: 'POST' });
+    toast('Ping complete');
+    loadDashboard();
+  } catch {}
+}
+
+async function killJob(id) {
+  try {
+    await api(`/jobs/${id}`, { method: 'DELETE' });
+    toast(`Job #${id} killed`);
+    loadJobs();
+  } catch {}
+}
+
+// ── Task Management (DB-powered) ──────────────────────────
+let _taskTotal = 0;
+let taskPage = 0;
+let _taskStatusFilter = '';
+let _taskSearchTimer = null;
+
+async function loadTaskRepos() {
+  try {
+    const res = await api('/task-db/repos');
+    const sel = document.getElementById('task-repo-select');
+    sel.innerHTML = '<option value="">All Repos</option>' +
+      (res.repos||[]).map(r => `<option value="${r}">${r}</option>`).join('');
+    loadTasksFromDB();
+  } catch { loadTasksFromDB(); }
+}
+
+function setTaskStatus(btn, status) {
+  document.querySelectorAll('.task-status-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  _taskStatusFilter = status;
+  taskPage = 0;
+  loadTasksFromDB();
+}
+
+function debounceTaskSearch() {
+  clearTimeout(_taskSearchTimer);
+  _taskSearchTimer = setTimeout(() => { taskPage = 0; loadTasksFromDB(); }, 300);
+}
+
+async function loadTasksFromDB() {
+  const repo = document.getElementById('task-repo-select').value;
+  const search = document.getElementById('task-search').value.trim();
+  const limit = parseInt(document.getElementById('task-per-page').value) || 20;
+  const offset = taskPage * limit;
+
+  const params = new URLSearchParams({ limit, offset });
+  if (repo) params.set('repo', repo);
+  if (_taskStatusFilter) params.set('status', _taskStatusFilter);
+  if (search) params.set('pattern', search);
+
+  const tbody = document.getElementById('tasks-table');
+  tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-dim);padding:32px">Loading...</td></tr>';
+
+  try {
+    const res = await api(`/task-db?${params}`);
+    _tasksData = res.tasks || [];
+    _taskTotal = res.total || 0;
+    document.getElementById('task-count').textContent = _taskTotal;
+    renderTaskTable();
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="8" style="color:var(--red);padding:24px">Failed: ${e.message||e}</td></tr>`;
+    _tasksData = [];
+    _taskTotal = 0;
+  }
+}
+
+function renderTaskTable() {
+  const tbody = document.getElementById('tasks-table');
+  const limit = parseInt(document.getElementById('task-per-page').value) || 20;
+  const statusIcons = { active: '○', dispatched: '◐', running: '◑', done: '●', failed: '✗' };
+  const statusColors = { active: 'var(--accent)', dispatched: 'var(--yellow)', running: 'var(--yellow)', done: 'var(--green)', failed: 'var(--red)' };
+
+  if (!_tasksData.length) {
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-dim);padding:40px">No tasks found</td></tr>';
+  } else {
+    tbody.innerHTML = _tasksData.map(t => {
+      const icon = statusIcons[t.status] || '?';
+      const color = statusColors[t.status] || 'var(--text-dim)';
+      const created = t.created_at ? new Date(t.created_at).toLocaleDateString() : '';
+      const ctx = t.context_type !== 'inline' ? `<span class="tag tag-purple" style="font-size:10px">${t.context_type}</span>` : '';
+      return `<tr style="cursor:pointer" onclick="showTaskDetail(${t.id})">
+        <td onclick="event.stopPropagation()"><input type="checkbox" class="task-check" data-id="${t.id}" data-branch="${t.branch||''}" data-desc="${(t.description||'').replace(/"/g,'&quot;')}" data-repo="${t.repo}" data-org="${t.org||''}" onchange="updateDispatchBtn()" /></td>
+        <td class="mono">${t.number}</td>
+        <td><span style="color:${color};font-weight:600">${icon}</span></td>
+        <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500">${t.title}</td>
+        <td class="mono" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--purple)">${t.branch||'—'}</td>
+        <td><span class="tag tag-blue" style="font-size:10px">${t.repo}</span></td>
+        <td>${ctx}</td>
+        <td style="font-size:11px;color:var(--text-dim)">${created}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  // Pagination controls
+  const start = taskPage * limit + 1;
+  const end = Math.min(start + _tasksData.length - 1, _taskTotal);
+  document.getElementById('task-page-info').textContent = _taskTotal ? `${start}–${end} of ${_taskTotal}` : 'No tasks';
+  document.getElementById('task-prev-btn').disabled = taskPage === 0;
+  document.getElementById('task-next-btn').disabled = end >= _taskTotal;
+  document.getElementById('task-check-all').checked = false;
+  updateDispatchBtn();
+}
+
+function toggleAllTaskChecks(master) {
+  document.querySelectorAll('.task-check').forEach(cb => { cb.checked = master.checked; });
+  updateDispatchBtn();
+}
+
+function updateDispatchBtn() {
+  const checked = document.querySelectorAll('.task-check:checked');
+  const btn = document.getElementById('dispatch-selected-btn');
+  const delBtn = document.getElementById('batch-delete-tasks-btn');
+  btn.disabled = checked.length === 0;
+  btn.textContent = checked.length ? `Dispatch ${checked.length} Task${checked.length > 1 ? 's' : ''}` : 'Dispatch Selected';
+  delBtn.style.display = checked.length > 0 ? '' : 'none';
+  delBtn.textContent = `🗑 Delete Selected (${checked.length})`;
+}
+
+async function batchDeleteTasks() {
+  const ids = [...document.querySelectorAll('.task-check:checked')].map(c => c.dataset.id);
+  if (!ids.length || !confirm(`Delete ${ids.length} task(s)?`)) return;
+  for (const id of ids) {
+    try { await api(`/task-db/${id}`, { method: 'DELETE' }); } catch {}
+  }
+  toast(`Deleted ${ids.length} task(s)`);
+  loadTasksFromDB();
+  loadDashboard();
+}
+
+async function showTaskDetail(taskId) {
+  const t = _tasksData.find(x => x.id === taskId);
+  if (!t) return;
+
+  document.getElementById('task-modal-title').textContent = `Task #${t.number}: ${t.title}`;
+
+  const statusOpts = ['active','dispatched','running','done','failed'].map(s =>
+    `<option value="${s}" ${s===t.status?'selected':''}>${s}</option>`
+  ).join('');
+
+  const descRaw = (t.description||'').replace(/"/g,'&quot;');
+  const verifRaw = (t.verification||'').replace(/"/g,'&quot;');
+
+  document.getElementById('task-modal-body').innerHTML = `
+    <div class="form-group"><label>Title</label>
+      <input type="text" id="td-title" value="${(t.title||'').replace(/"/g,'&quot;')}" /></div>
+    <div class="form-group"><label>Status</label>
+      <select id="td-status">${statusOpts}</select></div>
+    <div class="form-group"><label>Branch</label>
+      <input type="text" id="td-branch" value="${t.branch||''}" /></div>
+    <div class="form-group"><label>Description <span style="font-size:10px;color:var(--text-dim);font-weight:normal">(click to edit)</span></label>
+      <div id="td-desc-view" class="md-view" onclick="toggleDescEdit(true)" title="Click to edit">${renderSimpleMd(t.description||'')}</div>
+      <textarea id="td-description" style="display:none;min-height:160px;font-family:monospace;font-size:12px;resize:vertical">${t.description||''}</textarea>
+      <div style="display:flex;gap:6px;margin-top:4px">
+        <button class="btn btn-sm" id="td-desc-expand-btn" onclick="event.stopPropagation();toggleDescExpand()" style="font-size:10px;padding:2px 8px">▼ Expand</button>
+        <button class="btn btn-sm" id="td-desc-edit-btn" onclick="event.stopPropagation();toggleDescEdit(true)" style="font-size:10px;padding:2px 8px">✏️ Edit</button>
+        <button class="btn btn-sm" id="td-desc-preview-btn" onclick="event.stopPropagation();toggleDescEdit(false)" style="display:none;font-size:10px;padding:2px 8px">👁 Preview</button>
+      </div>
+    </div>
+    <div class="form-group"><label>Verification <span style="font-size:10px;color:var(--text-dim);font-weight:normal">(click to edit)</span></label>
+      <div id="td-verif-view" class="md-view" onclick="toggleVerifEdit(true)" title="Click to edit">${renderSimpleMd(t.verification||'')}</div>
+      <textarea id="td-verification" style="display:none;min-height:80px;font-family:monospace;font-size:12px;resize:vertical">${t.verification||''}</textarea>
+      <div style="display:flex;gap:6px;margin-top:4px">
+        <button class="btn btn-sm" id="td-verif-edit-btn" onclick="event.stopPropagation();toggleVerifEdit(true)" style="font-size:10px;padding:2px 8px">✏️ Edit</button>
+        <button class="btn btn-sm" id="td-verif-preview-btn" onclick="event.stopPropagation();toggleVerifEdit(false)" style="display:none;font-size:10px;padding:2px 8px">👁 Preview</button>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group"><label>Repo</label><div class="mono" style="font-size:13px;color:var(--text-muted)">${t.repo}</div></div>
+      <div class="form-group"><label>Context</label><div style="font-size:13px;color:var(--text-muted)">${t.context_type}${t.context_ref ? ': '+t.context_ref : ''}</div></div>
+      <div class="form-group"><label>Created By</label><div style="font-size:13px;color:var(--text-muted)">${t.created_by||'—'} ${t.created_by_cli ? '('+t.created_by_cli+')' : ''}</div></div>
+      <div class="form-group"><label>Created At</label><div style="font-size:13px;color:var(--text-muted)">${t.created_at||'—'}</div></div>
+      ${t.dispatch_device ? `<div class="form-group"><label>Device</label><div style="font-size:13px;color:var(--text-muted)">${t.dispatch_device}</div></div>` : ''}
+      ${t.worktree_path ? `<div class="form-group"><label>Worktree</label><div class="mono" style="font-size:11px;color:var(--text-muted)">${t.worktree_path}</div></div>` : ''}
+    </div>
+  `;
+
+  document.getElementById('task-modal-footer').innerHTML = `
+    <button class="btn" style="color:var(--red);margin-right:auto" onclick="deleteTaskFromDB(${t.id})">🗑 Delete</button>
+    <button class="btn" onclick="closeModal('task-detail-modal')">Cancel</button>
+    <button class="btn btn-primary" onclick="saveTaskEdit(${t.id})">💾 Save</button>
+  `;
+
+  showModal('task-detail-modal');
+}
+
+/* Lightweight markdown → HTML (bold, italic, code, headers, lists, links) */
+function renderSimpleMd(text) {
+  if (!text) return '<span style="color:var(--text-dim);font-style:italic">No description</span>';
+  let html = text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/```([\s\S]*?)```/g, '<pre style="background:var(--bg-input);padding:8px;border-radius:4px;overflow-x:auto;font-size:12px">$1</pre>')
+    .replace(/`([^`]+)`/g, '<code style="background:var(--bg-input);padding:1px 4px;border-radius:3px;font-size:12px">$1</code>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/^### (.+)$/gm, '<h4 style="margin:8px 0 4px;font-size:13px">$1</h4>')
+    .replace(/^## (.+)$/gm, '<h3 style="margin:8px 0 4px;font-size:14px">$1</h3>')
+    .replace(/^# (.+)$/gm, '<h3 style="margin:8px 0 4px;font-size:15px">$1</h3>')
+    .replace(/^[-*] (.+)$/gm, '<div style="padding-left:12px">• $1</div>')
+    .replace(/^\d+\. (.+)$/gm, (m,p1,off,str) => `<div style="padding-left:12px">${m}</div>`)
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" style="color:var(--accent)">$1</a>')
+    .replace(/\n/g, '<br>');
+  return html;
+}
+
+function toggleDescExpand() {
+  const view = document.getElementById('td-desc-view');
+  const btn = document.getElementById('td-desc-expand-btn');
+  if (view.style.maxHeight && view.style.maxHeight !== 'none') {
+    view.style.maxHeight = 'none';
+    btn.textContent = '▲ Collapse';
+  } else {
+    view.style.maxHeight = '120px';
+    btn.textContent = '▼ Expand';
+  }
+}
+function toggleDescEdit(edit) {
+  const view = document.getElementById('td-desc-view');
+  const ta = document.getElementById('td-description');
+  const editBtn = document.getElementById('td-desc-edit-btn');
+  const prevBtn = document.getElementById('td-desc-preview-btn');
+  const expBtn = document.getElementById('td-desc-expand-btn');
+  if (edit) {
+    ta.value = ta.value || view.textContent;
+    view.style.display = 'none'; ta.style.display = '';
+    editBtn.style.display = 'none'; prevBtn.style.display = '';
+    expBtn.style.display = 'none';
+    ta.focus();
+  } else {
+    view.innerHTML = renderSimpleMd(ta.value);
+    view.style.display = ''; ta.style.display = 'none';
+    editBtn.style.display = ''; prevBtn.style.display = 'none';
+    expBtn.style.display = '';
+  }
+}
+function toggleVerifEdit(edit) {
+  const view = document.getElementById('td-verif-view');
+  const ta = document.getElementById('td-verification');
+  const editBtn = document.getElementById('td-verif-edit-btn');
+  const prevBtn = document.getElementById('td-verif-preview-btn');
+  if (edit) {
+    ta.value = ta.value || view.textContent;
+    view.style.display = 'none'; ta.style.display = '';
+    editBtn.style.display = 'none'; prevBtn.style.display = '';
+    ta.focus();
+  } else {
+    view.innerHTML = renderSimpleMd(ta.value);
+    view.style.display = ''; ta.style.display = 'none';
+    editBtn.style.display = ''; prevBtn.style.display = 'none';
+  }
+}
+
+async function saveTaskEdit(taskId) {
+  const fields = {
+    title: document.getElementById('td-title').value,
+    status: document.getElementById('td-status').value,
+    branch: document.getElementById('td-branch').value,
+    description: document.getElementById('td-description').value,
+    verification: document.getElementById('td-verification').value,
+  };
+  try {
+    await api(`/task-db/${taskId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(fields),
+    });
+    toast('Task updated', 'success');
+    closeModal('task-detail-modal');
+    loadTasksFromDB();
+  } catch (e) {
+    toast(`Update failed: ${e.message||e}`, 'error');
+  }
+}
+
+async function deleteTaskFromDB(taskId) {
+  if (!confirm('Delete this task permanently?')) return;
+  try {
+    await api(`/task-db/${taskId}`, { method: 'DELETE' });
+    toast('Task deleted', 'success');
+    closeModal('task-detail-modal');
+    loadTasksFromDB();
+    loadTaskRepos(); // refresh repo dropdown in case last task for a repo
+  } catch (e) {
+    toast(`Delete failed: ${e.message||e}`, 'error');
+  }
+}
+
+async function dispatchSelectedTasks() {
+  const cli = document.getElementById('task-cli').value;
+  const checked = document.querySelectorAll('.task-check:checked');
+  if (!checked.length) return;
+
+  // Need at least one online device
+  if (!state.devices.length) { toast('No devices available', 'error'); return; }
+  const device = state.devices.find(d => d.online) || state.devices[0];
+
+  const btn = document.getElementById('dispatch-selected-btn');
+  btn.disabled = true;
+  btn.textContent = 'Dispatching...';
+
+  let ok = 0, fail = 0;
+  for (const cb of checked) {
+    try {
+      const repo = cb.dataset.repo;
+      const org = cb.dataset.org;
+      const branch = cb.dataset.branch;
+      const taskId = cb.dataset.id;
+      if (!branch) { toast(`Task has no branch — skipping`, 'error'); fail++; continue; }
+      if (!org) { toast(`Task has no org — skipping`, 'error'); fail++; continue; }
+      await api('/jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          device: device.name, org, repo, cli,
+          action: 'dispatch',
+          branch: branch,
+          task: cb.dataset.desc,
+        })
+      });
+      // Update task status to 'dispatched'
+      try {
+        await api(`/task-db/${taskId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'dispatched' }),
+        });
+      } catch {}
+      ok++;
+    } catch { fail++; }
+  }
+
+  toast(`Dispatched ${ok} task${ok!==1?'s':''} ${fail ? `(${fail} failed)` : ''}`, fail ? 'error' : 'success');
+  loadTasksFromDB();
+  loadJobs();
+  loadDashboard();
+}
+
+async function attachVT(id) {
+  toast(`Attaching VibeTunnel to job #${id}...`);
+  try {
+    const result = await api(`/jobs/${id}/vt-attach`, { method: 'POST' });
+    if (result.already_attached) {
+      window.open(result.vt_url, '_blank');
+      toast('Terminal already attached — opening', 'success');
+    } else if (result.ok && result.vt_url) {
+      window.open(result.vt_url, '_blank');
+      toast('🖥 Terminal attached and opened!', 'success');
+    } else {
+      toast(`VT attach failed: ${result.error || 'unknown'}`, 'error');
+    }
+    loadJobs();
+    loadDashboard();
+  } catch (e) {
+    toast(`VT attach error: ${e.message || e}`, 'error');
+  }
+}
+
+async function viewDeviceDetail(name) {
+  try {
+    const d = await api(`/devices/${name}`);
+    const sessions = (d.tmux_sessions || []).map(s =>
+      `<div style="padding:6px 0;border-bottom:1px solid var(--border)">
+        <span class="mono">${s.name}</span>
+        <span class="tag tag-dim">${s.windows} win</span>
+        ${s.attached ? '<span class="tag tag-green">attached</span>' : ''}
+      </div>`
+    ).join('') || '<div style="color:var(--text-dim)">No active sessions</div>';
+
+    const repos = (d.repos || []).map(r =>
+      `<div style="padding:4px 0"><span class="tag tag-blue">${r.org || '—'}</span> ${r.name}</div>`
+    ).join('') || '<div style="color:var(--text-dim)">No repos found</div>';
+
+    // Simple inline detail — replace device grid temporarily
+    document.getElementById('devices-grid').innerHTML = `
+      <div class="card" style="grid-column: span 2">
+        <div class="card-header">
+          <h3><span class="device-dot ${d.online ? 'online' : 'offline'}" style="display:inline-block;margin-right:8px"></span>${d.name}</h3>
+          <button class="btn btn-sm" onclick="loadDevices()">← Back</button>
+        </div>
+        <div class="card-body">
+          <div class="grid grid-2" style="gap:20px">
+            <div>
+              <h4 style="font-size:13px;margin-bottom:12px;color:var(--text-muted)">Connection</h4>
+              <div class="connect-box" onclick="copyText('mosh ${d.user}@${d.ip}')">mosh ${d.user}@${d.ip} <span class="copy-icon">📋</span></div>
+              <h4 style="font-size:13px;margin:16px 0 12px;color:var(--text-muted)">tmux Sessions</h4>
+              ${sessions}
+            </div>
+            <div>
+              <h4 style="font-size:13px;margin-bottom:12px;color:var(--text-muted)">Repos on Device</h4>
+              ${repos}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  } catch {}
+}
+
+function launchQuickJob(action, org, repo) {
+  if (!state.devices.length) { toast('No devices available', 'error'); return; }
+  const device = state.devices.find(d => d.online) || state.devices[0];
+  const payload = { device: device.name, org, repo, action, cli: '', branch: '', task: '' };
+  api('/jobs', { method: 'POST', body: JSON.stringify(payload) })
+    .then(result => {
+      if (result.ok) {
+        toast(`${action} started for ${org}/${repo} on ${device.name}`);
+        if (result.connect_cmd) toast(`Connect: ${result.connect_cmd}`);
+      } else {
+        toast(`Failed: ${result.stderr || 'error'}`, 'error');
+      }
+    });
+}
+
+// ── Utilities ────────────────────────────────────────────
+function statusTag(status) {
+  const map = { running: 'tag-green', completed: 'tag-blue', failed: 'tag-red', killed: 'tag-yellow', pending: 'tag-dim' };
+  return `<span class="tag ${map[status] || 'tag-dim'}">${status}</span>`;
+}
+
+function truncate(s, len) {
+  return s && s.length > len ? s.substring(0, len) + '…' : (s || '');
+}
+
+function copyText(text) {
+  navigator.clipboard.writeText(text).then(() => toast('Copied to clipboard'));
+}
+
+// ── Settings & Device Selector ───────────────────────────
+async function onGlobalDeviceChange(device) {
+  activeDevice = device;
+  try {
+    await api('/settings/default_device', {
+      method: 'PUT',
+      body: JSON.stringify({ value: device }),
+    });
+  } catch (e) { /* best effort */ }
+  loadDashboard();
+}
+
+async function loadSettings() {
+  try {
+    const data = await api('/settings');
+    const s = data.settings || {};
+    const devEl = document.getElementById('settings-default-device');
+    if (devEl) {
+      devEl.innerHTML = '<option value="">None (use env default)</option>' +
+        state.devices.map(d => `<option value="${d.name}"${d.name === (s.default_device || '') ? ' selected' : ''}>${d.name}</option>`).join('');
+    }
+    const cliEl = document.getElementById('settings-default-cli');
+    if (cliEl && s.default_cli) cliEl.value = s.default_cli;
+  } catch (e) { /* ignore */ }
+}
+
+async function saveSettings() {
+  const device = document.getElementById('settings-default-device').value;
+  const cli = document.getElementById('settings-default-cli').value;
+  if (!device) { toast('Please select a device', 'error'); return; }
+  try {
+    await Promise.all([
+      api('/settings/default_device', { method: 'PUT', body: JSON.stringify({ value: device }) }),
+      api('/settings/default_cli', { method: 'PUT', body: JSON.stringify({ value: cli }) }),
+    ]);
+    activeDevice = device;
+    syncAllDeviceSelectors(device);
+    const statusEl = document.getElementById('settings-status');
+    if (statusEl) statusEl.innerHTML = '<span style="color:var(--green)">✓ Settings saved</span>';
+    toast('Settings saved');
+    loadDashboard();
+  } catch (e) { toast('Failed to save settings', 'error'); }
+}
+
+async function resetSettings() {
+  if (!state.devices.length) { toast('No devices available', 'error'); return; }
+  // Reset to first device
+  const firstDevice = state.devices[0].name;
+  try {
+    await Promise.all([
+      api('/settings/default_device', { method: 'PUT', body: JSON.stringify({ value: firstDevice }) }),
+      api('/settings/default_cli', { method: 'DELETE' }),
+    ]);
+    activeDevice = firstDevice;
+    syncAllDeviceSelectors(firstDevice);
+    toast('Settings reset to defaults');
+    loadSettings();
+    loadDashboard();
+  } catch (e) { toast('Failed to reset settings', 'error'); }
+}
+
+function syncAllDeviceSelectors(device) {
+  ['global-device-select', 'mobile-device-select'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = device;
+  });
+}
+
+function onMobileCLIChange(cli) {
+  // Sync mobile CLI selection to task dispatch and settings
+  const taskCli = document.getElementById('task-cli');
+  if (taskCli) taskCli.value = cli;
+  // Persist
+  api('/settings/default_cli', { method: 'PUT', body: JSON.stringify({ value: cli }) }).catch(() => {});
+}
+
+function populateGlobalDeviceSelector() {
+  const opts = state.devices.map(d =>
+    `<option value="${d.name}"${d.name === activeDevice ? ' selected' : ''}>${d.name} (${d.type || 'unknown'})${d.online ? ' \u2713' : ''}</option>`
+  ).join('');
+  ['global-device-select', 'mobile-device-select'].forEach(id => {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    sel.innerHTML = '<option value="" disabled>Select device\u2026</option>' + opts;
+    if (activeDevice) sel.value = activeDevice;
+  });
+  // Auto-select first device if none selected
+  if (!activeDevice && state.devices.length) {
+    activeDevice = state.devices[0].name;
+    syncAllDeviceSelectors(activeDevice);
+    // Persist auto-selected device
+    api('/settings/default_device', { method: 'PUT', body: JSON.stringify({ value: activeDevice }) }).catch(() => {});
+  }
+}
+
+// ── Init ─────────────────────────────────────────────────
+(async () => {
+  // Load saved default device before first dashboard load
+  try {
+    const r = await api('/settings/default_device');
+    if (r.value) {
+      activeDevice = r.value;
+      syncAllDeviceSelectors(r.value);
+    }
+  } catch (e) { /* ignore */ }
+  // Load saved CLI
+  try {
+    const r = await api('/settings/default_cli');
+    if (r.value) {
+      const mobileCli = document.getElementById('mobile-cli-select');
+      if (mobileCli) mobileCli.value = r.value;
+      const taskCli = document.getElementById('task-cli');
+      if (taskCli) taskCli.value = r.value;
+    }
+  } catch (e) { /* ignore */ }
+  loadDashboard();
+})();
+setInterval(loadDashboard, 30000);
+</script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+# config/devices/ios_termius.yaml — Termius (SSH/Mosh client on iOS)
+device:
+  type: ios_termius
+  os: ios
+  shell: none
+  package_manager: none
+  user: ""
+  tailscale_flags: "--accept-routes --ssh"
+  client_only: true               # No local shell, SSH client only
+  skip_tools: [all]               # Nothing to install — Termius is an App Store app
+  mosh:
+    supported: true               # Termius has built-in Mosh support
+    bind_server: false
+  termius:
+    # Termius is a polished SSH/Mosh client — no local sshd
+    # Configure hosts within the Termius app using Tailscale IPs
+    # Supports: SSH, Mosh, SFTP, port forwarding, agent forwarding
+    # Background sessions limited by iOS (~20-30s before suspension)
+    sync_hosts: true              # Can sync host configs across devices

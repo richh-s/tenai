@@ -1,0 +1,18 @@
+# config/devices/ios_ish.yaml — iSH (Alpine Linux on iOS)
+device:
+  type: ios_ish
+  os: alpine
+  shell: ash
+  package_manager: apk
+  user: root
+  tailscale_flags: "--accept-routes  --ssh"
+  skip_tools: [vibetunnel, muxtree, codex_cli, tailscale, ufw, htop, python_env]
+  mosh:
+    bind_server: false
+  ish:
+    # iSH runs Alpine Linux locally via x86 emulation
+    # Tailscale VPN is handled by the native iOS Tailscale app
+    # Sessions die when iSH is backgrounded on iOS
+    background_warning: true
+    # Prerequisites (user must install manually):
+    #   apk add openssh && ssh-keygen -A && /usr/sbin/sshd

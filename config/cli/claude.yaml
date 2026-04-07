@@ -1,0 +1,204 @@
+# Claude Code Configuration
+# Managed by: scripts/install/cli_setup.sh
+# Targets:    make cli-setup CLI=claude | make cli-mcp | make cli-plugins | etc.
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MCP SERVERS (claude mcp add {name} -- {command} {args...})
+# ══════════════════════════════════════════════════════════════════════════════
+
+mcp_servers:
+  # ── Essential ──
+  - name: context7
+    command: npx
+    args: ["-y", "@upstash/context7-mcp@latest"]
+    description: "Up-to-date library docs in context"
+
+  - name: sequential-thinking
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+    description: "Structured problem decomposition and reasoning"
+
+  - name: filesystem
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "~"]
+    description: "Controlled file system access (read/write/search)"
+
+  - name: github
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-github"]
+    description: "GitHub repos, issues, PRs, code search"
+
+  # ── Optional ──
+  # - name: puppeteer
+  #   command: npx
+  #   args: ["-y", "@anthropic/mcp-server-puppeteer"]
+  #   description: "Browser automation and screenshots"
+  # - name: postgres
+  #   command: npx
+  #   args: ["-y", "@modelcontextprotocol/server-postgres"]
+  #   description: "PostgreSQL schema inspection and queries"
+  # - name: memory
+  #   command: npx
+  #   args: ["-y", "@modelcontextprotocol/server-memory"]
+  #   description: "Knowledge graph memory across sessions"
+  # - name: brave-search
+  #   command: npx
+  #   args: ["-y", "@modelcontextprotocol/server-brave-search"]
+  #   description: "Web search via Brave Search API"
+  # - name: slack
+  #   command: npx
+  #   args: ["-y", "@modelcontextprotocol/server-slack"]
+  #   description: "Slack channel access and messaging"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PLUGINS
+#
+# Two install modes:
+#   1. Git-based:        url + marketplace.json auto-discovery
+#      → claude plugin marketplace add <url> && claude plugin install <name>@<marketplace>
+#   2. Marketplace:      marketplace_repo + plugin_id (no git clone needed)
+#      → claude plugin marketplace add <marketplace_repo> && claude plugin install <plugin_id>
+# ══════════════════════════════════════════════════════════════════════════════
+
+plugins:
+  # ── Git-based plugins ──
+  - name: conductor
+    url: "https://github.com/get10acious/conductor"
+    description: "Task planning — spec→plan→implement lifecycle"
+
+  # ── Marketplace plugins ──
+  - name: telegram
+    marketplace: "claude-plugins-official"
+    marketplace_repo: "https://github.com/anthropics/claude-plugins-official"
+    plugin_id: "telegram@claude-plugins-official"
+    description: "Telegram channel plugin for Claude"
+    # Requires: TELEGRAM_BOT_TOKEN in .env
+    # Sender pairing is automated during channel setup
+
+  # ── Optional marketplace plugins ──
+  # - name: discord
+  #   marketplace: "claude-plugins-official"
+  #   marketplace_repo: "https://github.com/anthropics/claude-plugins-official"
+  #   plugin_id: "discord@claude-plugins-official"
+  #   description: "Discord channel plugin for Claude"
+
+  # - name: imessage
+  #   marketplace: "claude-plugins-official"
+  #   marketplace_repo: "https://github.com/anthropics/claude-plugins-official"
+  #   plugin_id: "imessage@claude-plugins-official"
+  #   description: "iMessage channel plugin for Claude (macOS only)"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# VERCEL SKILLS (installed via: npx skills add <package>)
+# Cross-CLI — works with claude-code, gemini-cli, codex, cursor, etc.
+# ══════════════════════════════════════════════════════════════════════════════
+
+vercel_skills:
+  # ── Essential (verified in anthropics/skills repo) ──
+  - name: webapp-testing
+    package: "anthropics/skills/webapp-testing"
+    description: "Playwright-based web app testing and debugging"
+
+  - name: mcp-builder
+    package: "anthropics/skills/mcp-builder"
+    description: "Guide for creating high-quality MCP servers"
+
+  - name: skill-creator
+    package: "anthropics/skills/skill-creator"
+    description: "Create, modify, and optimize skills"
+
+  # ── Document Generation ──
+  - name: pdf
+    package: "anthropics/skills/pdf"
+    description: "Read, create, merge, split PDF files"
+
+  - name: docx
+    package: "anthropics/skills/docx"
+    description: "Word document generation and editing"
+
+  - name: xlsx
+    package: "anthropics/skills/xlsx"
+    description: "Spreadsheet creation and manipulation"
+
+  - name: pptx
+    package: "anthropics/skills/pptx"
+    description: "PowerPoint presentation creation"
+
+  # ── Optional ──
+  # - name: frontend-design
+  #   package: "anthropics/skills/frontend-design"
+  #   description: "Production-grade frontend UI design"
+  # - name: claude-api
+  #   package: "anthropics/skills/claude-api"
+  #   description: "Claude API integration patterns"
+  # - name: web-artifacts-builder
+  #   package: "anthropics/skills/web-artifacts-builder"
+  #   description: "Multi-component React artifacts"
+  # - name: theme-factory
+  #   package: "anthropics/skills/theme-factory"
+  #   description: "Styling artifacts with themes"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SKILLS (copied to ~/.claude/skills/ or .agents/skills/)
+# ══════════════════════════════════════════════════════════════════════════════
+
+skills:
+  - name: validate-tasks
+    source: ".claude/commands"
+  - name: proof-of-work
+    source: ".claude/commands"
+  - name: implement-task
+    source: ".claude/commands"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LAUNCH ARGS (appended to claude command when dispatching agents)
+# ══════════════════════════════════════════════════════════════════════════════
+
+launch_args:
+  - "--dangerously-skip-permissions"
+  - "--channels plugin:telegram@claude-plugins-official"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HOOKS — Automation scripts triggered at lifecycle events
+#
+# Format: JSON in ~/.claude/settings.json under "hooks" key
+# Source: config/cli/hooks/claude_hooks.json
+#
+# Event reference:
+#   SessionStart       — session start / resume / compact
+#   PreToolUse         — before a tool runs (can block)
+#   PostToolUse        — after a tool completes
+#   PostToolUseFailure — after a tool fails
+#   Notification       — when Claude needs user attention
+#   PermissionRequest  — when Claude needs permission (can auto-approve)
+#   Stop / StopFailure — when a turn ends
+#   ConfigChange       — when settings change
+#   PreCompact         — before context compaction
+#   PostCompact        — after context compaction
+# ══════════════════════════════════════════════════════════════════════════════
+
+hooks:
+  source: "config/cli/hooks/claude_hooks.json"
+  # Individual hooks are defined in the JSON file.
+  # Recommended hooks (enabled by default):
+  #   - notification    — OS notification when Claude needs input
+  #   - protect-files   — block edits to .env, lockfiles, .git/
+  #   - post-compact    — re-inject critical context after compaction
+  #   - audit-log       — log tool usage for debugging
+  #
+  # Optional hooks (disabled in JSON, uncomment to enable):
+  #   - auto-format     — run prettier after file edits
+  #   - auto-approve-plan — auto-approve ExitPlanMode permission
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SETTINGS, RULES, SUBAGENTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+settings: {}
+
+rules:
+  source: "config/cli/rules/global_claude.md"
+
+subagents: []
+  # - name: reviewer
+  #   source: "config/cli/subagents/reviewer.md"

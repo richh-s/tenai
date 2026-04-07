@@ -1,0 +1,983 @@
+#!/usr/bin/env python3
+"""Generate ~/.tenai_aliases from config/defaults.yaml.
+
+Reads the tailscale.devices section and dynamically creates aliases
+for every device based on its type (server, mac, android, ios_ish, ios_termius, windows).
+
+Usage:
+    python3 scripts/configure/generate_aliases.py [--dry-run]
+"""
+
+import argparse
+import os
+import sys
+from datetime import datetime
+from pathlib import Path
+
+
+# Auto-load .env so DEVICE_NAME is available when running standalone
+_env_file = Path(__file__).resolve().parent.parent.parent / ".env"
+if _env_file.exists():
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(_env_file)
+    except ImportError:
+        # Fallback: parse KEY=VALUE manually (skip comments, strip whitespace)
+        with open(_env_file) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, _, val = line.partition("=")
+                    # Strip inline comments and whitespace
+                    val = val.split("#")[0].strip()
+                    os.environ.setdefault(key.strip(), val)
+
+
+def load_config() -> dict:
+    """Load merged config (defaults.yaml + local.yaml overlay)."""
+    # Use central loader which handles deep-merge of local.yaml
+    script_dir = Path(__file__).resolve().parent
+    sys.path.insert(0, str(script_dir.parent.parent))
+    from scripts.lib.load_config import load_config as _load
+    return _load()
+
+
+def get_my_device_name() -> str:
+    """Get the current device name from .env or environment."""
+    return os.environ.get("DEVICE_NAME", "").strip()
+
+
+def get_infra_dir() -> str:
+    """Get the absolute path to the tenai-infra repo root."""
+    return str(Path(__file__).resolve().parent.parent.parent)
+
+
+# ── Capability matrix by device type ──────────────────────────────────────────
+# What aliases to generate for each target device type
+CAPABILITIES = {
+    "server": {
+        "ssh": True,
+        "ping": True,
+        "scp": True,
+        "mosh_tmux": True,
+        "mosh_bind_server": True,  # --bind-server on remote
+        "tailscale_send": True,
+        "vibetunnel_remote": True,
+    },
+    "mac": {
+        "ssh": True,
+        "ping": True,
+        "scp": True,
+        "mosh_tmux": True,
+        "mosh_bind_server": False,
+        "tailscale_send": True,
+        "vibetunnel_remote": False,
+    },
+    "android": {
+        "ssh": True,
+        "ping": True,
+        "scp": True,
+        "mosh_tmux": True,
+        "mosh_bind_server": False,
+        "tailscale_send": True,
+        "vibetunnel_remote": False,
+    },
+    "ios_ish": {
+        "ssh": True,              # sshd via apk add openssh
+        "ping": True,
+        "scp": True,
+        "mosh_tmux": True,        # mosh available via apk
+        "mosh_bind_server": False,
+        "tailscale_send": True,   # iOS Tailscale app handles this
+        "vibetunnel_remote": False,
+    },
+    "ios_termius": {
+        "ssh": False,             # no sshd — Termius is client only
+        "ping": True,             # can ping via Tailscale IP
+        "scp": False,             # no sshd
+        "mosh_tmux": False,       # can't mosh INTO Termius
+        "mosh_bind_server": False,
+        "tailscale_send": True,   # Tailscale file send works
+        "vibetunnel_remote": False,
+    },
+    "windows": {
+        "ssh": True,              # built-in OpenSSH server
+        "ping": True,
+        "scp": True,
+        "mosh_tmux": False,       # no native mosh on Windows
+        "mosh_bind_server": False,
+        "tailscale_send": True,
+        "vibetunnel_remote": False,
+    },
+}
+
+
+def _get_my_device_type(config: dict, my_device: str) -> str:
+    """Get the device type for the current device."""
+    devices = config.get("tailscale", {}).get("devices", {})
+    dev = devices.get(my_device, {})
+    return dev.get("type", "server")
+
+
+# Mosh-server paths per device type (needed because SSH may not have full PATH)
+MOSH_SERVER_PATHS = {
+    "server": "/usr/bin/mosh-server",
+    "mac": "/usr/local/bin/mosh-server",
+    "android": "/data/data/com.termux/files/usr/bin/mosh-server",
+    "ios_ish": "/usr/bin/mosh-server",
+}
+
+
+def generate_aliases(config: dict, my_device: str, infra_dir: str | None = None) -> str:
+    """Generate the full aliases file content.
+
+    Args:
+        config: Loaded defaults.yaml configuration.
+        my_device: Device name (self) to generate aliases for.
+        infra_dir: Absolute path to tenai-infra on the target device.
+                   If None, auto-detected from current repo location.
+    """
+    devices = config.get("tailscale", {}).get("devices", {})
+    if infra_dir is None:
+        infra_dir = get_infra_dir()
+    lines = []
+
+    # ── Header ────────────────────────────────────────────────────────────────
+    lines.append("# ── TENAI INFRA ALIASES ──")
+    lines.append("# Generated by tenai-infra/scripts/configure/generate_aliases.py")
+    lines.append("# Re-run: make configure-aliases")
+    lines.append(f"# Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append(f"# Current device: {my_device or '(unknown)'}")
+    lines.append("#")
+    lines.append("# This file is sourced from your shell rc (~/.bashrc or ~/.zshrc).")
+    lines.append("# Do not edit manually — changes will be overwritten on next run.")
+    lines.append("")
+
+    # ── Static Tailscale aliases ──────────────────────────────────────────────
+    lines.append("# ── Tailscale ──────────────────────────────────")
+    lines.append("alias ts_status='tailscale status'")
+    lines.append("alias ts_ip='tailscale ip'")
+    lines.append("alias ts_check='tailscale status && echo \"--- Public IP ---\" && curl -s ifconfig.me && echo'")
+
+    # Exit node aliases — find devices with advertise_exit_node
+    exit_nodes = [
+        name for name, dev in devices.items()
+        if dev.get("advertise_exit_node")
+    ]
+    if exit_nodes:
+        # Use the first exit node as default
+        lines.append(f"alias ts_exit_on='tailscale set --exit-node={exit_nodes[0]}'")
+        lines.append("alias ts_exit_off='tailscale set --exit-node='")
+        # If multiple exit nodes, add named variants
+        if len(exit_nodes) > 1:
+            for node in exit_nodes:
+                lines.append(f"alias ts_exit_{_safe_name(node)}='tailscale set --exit-node={node}'")
+    lines.append("")
+
+    # ── Tailscale file receive ────────────────────────────────────────────────
+    lines.append("# ── Tailscale receive ──────────────────────────")
+    lines.append("alias ts_recv='tailscale file get ~/Downloads/ 2>/dev/null || tailscale file get ~/storage/downloads/'")
+    lines.append("")
+
+    # ── Per-device aliases ────────────────────────────────────────────────────
+    for dev_name, dev_info in devices.items():
+        # Skip self
+        if dev_name == my_device:
+            continue
+
+        ip = dev_info.get("ip", "")
+        user = dev_info.get("user", "ubuntu")
+        dev_type = dev_info.get("type", "server")
+        ssh_port = dev_info.get("ssh_port", 22)
+        caps = CAPABILITIES.get(dev_type, CAPABILITIES["server"])
+        safe = _safe_name(dev_name)
+
+        # Port flags for SSH (-p) and SCP (-P)
+        ssh_port_flag = f" -p {ssh_port}" if ssh_port != 22 else ""
+        scp_port_flag = f" -P {ssh_port}" if ssh_port != 22 else ""
+
+        lines.append(f"# ── {dev_name} ({dev_type}) ──────────────────────")
+
+        # Default landing directory (from config or ~/tenai-infra)
+        landing_dir = dev_info.get("default_dir", "~/tenai-infra")
+
+        # SSH — land in tenai-infra by default
+        if caps["ssh"]:
+            remote_cmd = f'cd {landing_dir} 2>/dev/null; exec \\$SHELL -l'
+            ssh_alias = f"alias ssh_{safe}='ssh{ssh_port_flag} -t {user}@{ip} \"{remote_cmd}\"'"
+            lines.append(ssh_alias)
+
+        # Ping
+        if caps["ping"]:
+            lines.append(f"alias ping_{safe}='ping -c 3 {ip}'")
+
+        # Tailscale file send
+        if caps["tailscale_send"]:
+            lines.append(f"alias send_{safe}='tailscale file cp $1 {dev_name}:'")
+
+        # SCP push/pull
+        if caps["scp"]:
+            lines.append(f"alias push_{safe}='scp{scp_port_flag} -r $1 {user}@{ip}:~/'")
+            lines.append(f"alias pull_{safe}='scp{scp_port_flag} -r {user}@{ip}:$1 ./'")
+
+        # Mosh + tmux function
+        if caps["mosh_tmux"]:
+            my_type = _get_my_device_type(config, my_device)
+            # Build mosh command based on source and target capabilities
+            mosh_extra = ""
+            # Decide SSH adapter based on source device type:
+            # - server/mac have tailscale CLI → use "tailscale ssh" (no key exchange)
+            # - android/ios don't have tailscale CLI → use plain "ssh"
+            has_tailscale_cli = my_type in ("server", "mac")
+            if ssh_port != 22:
+                # Non-standard port (e.g. Termux 8022): must use ssh with -p
+                mosh_extra += f' --ssh="ssh -p {ssh_port}"'
+            elif has_tailscale_cli:
+                # Plain ssh works — SSH keys are distributed via make distribute-keys
+                # (tailscale ssh is incompatible with mosh: -n flag and IP resolution issues)
+                pass
+            # else: default ssh (for android/ios connecting to standard port devices)
+            # Set explicit mosh-server path for the target device
+            server_path = MOSH_SERVER_PATHS.get(dev_type)
+            if server_path:
+                mosh_extra += f' --server={server_path}'
+            if caps["mosh_bind_server"] and my_type not in ("android", "ios_ish"):
+                # --bind-server only if source device supports it (Termux mosh doesn't)
+                mosh_extra += f" --bind-server={ip}"
+            mosh_cmd = f"mosh{mosh_extra} {user}@{ip}"
+            lines.append(f"{safe}() {{")
+            lines.append("  local session=${1:-main}")
+            # Kill stuck tmux sessions (dead/no windows) before connecting
+            lines.append(f'  ssh{ssh_port_flag} {user}@{ip} "'
+                         'tmux list-windows -t \\"$session\\" 2>/dev/null | grep -q . || '
+                         'tmux kill-session -t \\"$session\\" 2>/dev/null'
+                         f'" 2>/dev/null; true')
+            lines.append(f'  {mosh_cmd} -- tmux new-session -A -s "$session" -c {landing_dir}')
+            lines.append("}")
+        # VibeTunnel remote — start server, user views in browser
+        if caps["vibetunnel_remote"]:
+            lines.append(f"# vt_{safe} — start VibeTunnel on {dev_name}, view at http://{dev_name}:4020")
+            lines.append(f"vt_{safe}() {{")
+            lines.append(f'  echo "Starting VibeTunnel on {dev_name}..."')
+            lines.append(f'  echo "  Dashboard: http://{dev_name}:4020"')
+            lines.append(
+                f"  ssh {user}@{ip} "
+                '"export PATH=\\$PATH:\\$HOME/.npm-global/bin:/usr/local/bin; '
+                'ss -tlnp 2>/dev/null | grep -q 4020 && echo VibeTunnel already running on port 4020 || { '
+                'nohup vibetunnel --no-auth > /tmp/vibetunnel.log 2>&1 & '
+                'sleep 3; '
+                'if ss -tlnp 2>/dev/null | grep -q 4020; then '
+                'echo VibeTunnel started on port 4020; '
+                'else echo FAILED to start; tail -20 /tmp/vibetunnel.log; fi; }"'
+            )
+            lines.append("}")
+
+        # Webapp remote — start server via make webapp-bg, use views in browser
+        if caps.get("vibetunnel_remote", False):
+            lines.append(f"# web_{safe} — start Webapp on {dev_name} via Docker, view at http://{dev_name}:7700")
+            lines.append(f"web_{safe}() {{")
+            lines.append(f'  echo "Starting Webapp (Docker) on {dev_name}..."')
+            lines.append(
+                f"  ssh {user}@{ip} "
+                '"cd ~/tenai-infra && make webapp-docker"'
+            )
+            lines.append(f'  echo "  Dashboard: http://{dev_name}:7700"')
+            lines.append("}")
+
+        lines.append("")
+
+    # ── Device-type-aware local aliases ─────────────────────────────────────
+    my_type = _get_my_device_type(config, my_device)
+
+    # VibeTunnel — only on server/mac (android/ios doesn't run VibeTunnel)
+    if my_type in ("server", "mac"):
+        lines.append("# ── VibeTunnel ─────────────────────────────────")
+        lines.append("# On Mac: start from menu bar; on Linux: vibetunnel CLI")
+        lines.append("# Dashboard: http://localhost:4020")
+        lines.append(
+            "alias vt_server='"
+            'if [ -d "/Applications/VibeTunnel.app" ]; then '
+            "open -a VibeTunnel; "
+            "else vibetunnel --no-auth; fi'"
+        )
+        lines.append("alias vt_status='vt status'")
+        lines.append("# vt_local [session] — view local tmux in VibeTunnel browser")
+        lines.append("vt_local() {")
+        lines.append("  local session=${1:-main}")
+        lines.append('  vt tmux new-session -A -s "$session"')
+        lines.append("}")
+        lines.append("")
+
+    # tenai-infra shortcut — path differs per device type
+    lines.append("# ── tenai-infra shortcuts ─────────────────────")
+    if my_type in ("android", "ios_ish"):
+        lines.append("alias tenai='cd ~/tenai-infra'")
+    else:
+        lines.append(f"alias tenai='cd {infra_dir}'")
+    lines.append("")
+
+    # ── Push env to device ─────────────────────────────────────────────
+    lines.append("# ── Push .env to device ─────────────────────────")
+    lines.append("# Usage: tenai_push_env <device> [env_file] [name]")
+    lines.append("#   device:   device name from config")
+    lines.append("#   env_file: path to .env (default: .env)")
+    lines.append("#   name:     override env name (default: org--repo from git remote)")
+    lines.append("tenai_push_env() {")
+    lines.append('  local device="${1:?Usage: tenai_push_env <device> [env_file] [name]}"')
+    lines.append('  local env_src="${2:-.env}"')
+    lines.append('  local env_name="${3:-}"')
+    lines.append('  if [ ! -f "$env_src" ]; then echo "\u2717 File not found: $env_src"; return 1; fi')
+    lines.append('  if [ -z "$env_name" ]; then')
+    lines.append("    local origin")
+    lines.append('    origin=$(git remote get-url origin 2>/dev/null || echo "")')
+    lines.append('    if [ -n "$origin" ]; then')
+    lines.append(r"""      env_name=$(echo "$origin" | sed 's|.*[:/]\([^/]*/[^/]*\)\.git$|\1|;s|.*[:/]\([^/]*/[^/]*\)$|\1|;s|/|--|')""")
+    lines.append('      env_name="${env_name}.env"')
+    lines.append("    else")
+    lines.append('      env_name="$(basename "$(pwd)").env"')
+    lines.append("    fi")
+    lines.append("  else")
+    lines.append('    # Ensure .env suffix')
+    lines.append('    case "$env_name" in *.env) ;; *) env_name="${env_name}.env" ;; esac')
+    lines.append("  fi")
+    # Resolve device IP/user using tenai-infra's resolve_host.py
+    lines.append('  local resolve_out')
+    lines.append(f'  resolve_out=$({infra_dir}/.venv/bin/python3 '
+                 f'{infra_dir}/scripts/configure/resolve_host.py "$device" 2>/dev/null) || '
+                 '{ echo "✗ Cannot resolve device: $device"; return 1; }')
+    lines.append('  eval "$resolve_out"')
+    lines.append('  echo "── Pushing $env_src → ${RESOLVED_NAME}:~/.tenai_envs/${env_name} ──"')
+    lines.append('  ssh -o BatchMode=yes "${RESOLVED_USER}@${RESOLVED_IP}" "mkdir -p ~/.tenai_envs"')
+    lines.append('  scp "$env_src" "${RESOLVED_USER}@${RESOLVED_IP}:~/.tenai_envs/${env_name}"')
+    lines.append('  ssh -o BatchMode=yes "${RESOLVED_USER}@${RESOLVED_IP}" "chmod 600 ~/.tenai_envs/${env_name}"')
+    lines.append('  echo "✓ Pushed as ~/.tenai_envs/${env_name} on ${RESOLVED_NAME}"')
+    lines.append("}")
+    lines.append("")
+
+    # ── Pull env from ~/.tenai_envs/ ──────────────────────────────────
+    lines.append("# ── Pull .env from ~/.tenai_envs/ ─────────────────")
+    lines.append("# Usage: tenai_env_pull [-f]")
+    lines.append("#   Copies ~/.tenai_envs/{org--repo}.env → .env in current git repo.")
+    lines.append("#   -f: force overwrite without prompting")
+    lines.append("tenai_env_pull() {")
+    lines.append('  if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then')
+    lines.append('    echo "Usage: tenai_env_pull [-f]"')
+    lines.append('    echo "  Copies ~/.tenai_envs/{org--repo}.env into .env in the current repo."')
+    lines.append('    echo "  -f  Force overwrite without prompting."')
+    lines.append("    return 0")
+    lines.append("  fi")
+    lines.append('  local force=0')
+    lines.append('  [ "$1" = "-f" ] && force=1')
+    lines.append("  local origin")
+    lines.append('  origin=$(git remote get-url origin 2>/dev/null || echo "")')
+    lines.append('  if [ -z "$origin" ]; then')
+    lines.append('    echo "✗ Not in a git repo or no remote configured"; return 1')
+    lines.append("  fi")
+    lines.append("  local env_name")
+    lines.append(r"""  env_name=$(echo "$origin" | sed 's|.*[:/]\([^/]*/[^/]*\)\.git$|\1|;s|.*[:/]\([^/]*/[^/]*\)$|\1|;s|/|--|')""")
+    lines.append('  local repo_basename')
+    lines.append('  repo_basename=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")')
+    lines.append("  local src_file=\"\"")
+    lines.append('  for envf in "$HOME/.tenai_envs/${env_name}.env" "$HOME/.tenai_envs/${repo_basename}.env"; do')
+    lines.append('    if [ -f "$envf" ]; then src_file="$envf"; break; fi')
+    lines.append("  done")
+    lines.append('  if [ -z "$src_file" ]; then')
+    lines.append('    echo "✗ No env file found in ~/.tenai_envs/ for ${env_name} or ${repo_basename}"')
+    lines.append("    return 1")
+    lines.append("  fi")
+    # Guard: handle existing .env (file or directory)
+    lines.append('  if [ -d ".env" ]; then')
+    lines.append('    echo "⚠ .env exists as a DIRECTORY (likely created by Docker)"')
+    lines.append('    if [ "$force" = "1" ]; then')
+    lines.append('      rm -rf .env')
+    lines.append("    else")
+    lines.append('      printf "  Remove and replace with env file? [y/N] "; read -r ans')
+    lines.append('      case "$ans" in y|Y|yes) rm -rf .env ;; *) echo "  Aborted."; return 1 ;; esac')
+    lines.append("    fi")
+    lines.append('  elif [ -f ".env" ]; then')
+    lines.append('    if [ "$force" != "1" ]; then')
+    lines.append('      echo "⚠ .env already exists ($(wc -l < .env) lines)"')
+    lines.append('      printf "  Overwrite with $(basename "$src_file")? [y/N] "; read -r ans')
+    lines.append('      case "$ans" in y|Y|yes) ;; *) echo "  Kept existing .env."; return 0 ;; esac')
+    lines.append("    fi")
+    lines.append("  fi")
+    lines.append('  cat "$src_file" > .env')
+    lines.append("  chmod 600 .env")
+    lines.append('  echo "✓ Pulled $(basename "$src_file") → .env"')
+    lines.append("}")
+    lines.append("")
+
+    # ── Shared helper: detect repo/org from git remote ─────────────────
+    lines.append("# ── Shared: detect repo/org from git remote ─────")
+    lines.append("_tenai_detect_repo() {")
+    lines.append('  local origin')
+    lines.append('  origin=$(git remote get-url origin 2>/dev/null || echo "")')
+    lines.append('  if [ -n "$origin" ]; then')
+    lines.append(r"""    echo "$origin" | sed 's|.*[:/]\([^/]*/[^/]*\)\.git$|\1|;s|.*[:/]\([^/]*/[^/]*\)$|\1|' | awk -F/ '{print $2}'""")
+    lines.append("  fi")
+    lines.append("}")
+    lines.append("_tenai_detect_org() {")
+    lines.append('  local origin')
+    lines.append('  origin=$(git remote get-url origin 2>/dev/null || echo "")')
+    lines.append('  if [ -n "$origin" ]; then')
+    lines.append(r"""    echo "$origin" | sed 's|.*[:/]\([^/]*/[^/]*\)\.git$|\1|;s|.*[:/]\([^/]*/[^/]*\)$|\1|' | awk -F/ '{print $1}'""")
+    lines.append("  fi")
+    lines.append("}")
+    lines.append("")
+
+    # ── Universal aliases ──────────────────────────────────────────────
+    lines.append("# ── Universal tenai commands ───────────────────────")
+    lines.append("")
+
+    # tenai_status
+    lines.append("# tenai_status — mesh + repos overview")
+    lines.append("tenai_status() {")
+    lines.append('  if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then')
+    lines.append('    echo "Usage: tenai_status"')
+    lines.append('    echo "  Show mesh device status and repo overview."')
+    lines.append("    return 0")
+    lines.append("  fi")
+    lines.append(f'  make -C {infra_dir} status')
+    lines.append("}")
+    lines.append("")
+
+    # tenai_check
+    lines.append("# tenai_check [device] — verify tools installed")
+    lines.append("tenai_check() {")
+    lines.append('  if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then')
+    lines.append('    echo "Usage: tenai_check [device]"')
+    lines.append('    echo "  Verify tools installed on a device (or locally if no device)."')
+    lines.append("    return 0")
+    lines.append("  fi")
+    lines.append(f'  make -C {infra_dir} check HOST="$1"')
+    lines.append("}")
+    lines.append("")
+
+    # tenai_devices
+    lines.append("# tenai_devices — list all mesh devices")
+    lines.append("tenai_devices() {")
+    lines.append('  if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then')
+    lines.append('    echo "Usage: tenai_devices"')
+    lines.append('    echo "  List all devices in the Tailscale mesh."')
+    lines.append("    return 0")
+    lines.append("  fi")
+    lines.append(f'  {infra_dir}/.venv/bin/python3 {infra_dir}/scripts/configure/list_devices.py')
+    lines.append("}")
+    lines.append("")
+
+    # tenai_resolve
+    lines.append("# tenai_resolve <device> — IP/user lookup")
+    lines.append("tenai_resolve() {")
+    lines.append('  if [ "$1" = "--help" ] || [ "$1" = "-h" ] || [ -z "$1" ]; then')
+    lines.append('    echo "Usage: tenai_resolve <device>"')
+    lines.append('    echo "  Look up IP, user, and type for a device."')
+    lines.append("    return 0")
+    lines.append("  fi")
+    lines.append(f'  {infra_dir}/.venv/bin/python3 {infra_dir}/scripts/configure/resolve_host.py "$1"')
+    lines.append("}")
+    lines.append("")
+
+    # tenai_tmux — create or attach to named tmux session (global, any repo)
+    lines.append("# tenai_tmux [name] — create or attach to tmux session (default: main)")
+    lines.append("tenai_tmux() {")
+    lines.append('  if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then')
+    lines.append('    echo "Usage: tenai_tmux [SESSION_NAME]"')
+    lines.append('    echo "  Create or attach to a named tmux session."')
+    lines.append('    echo "  Default session name: main"')
+    lines.append("    return 0")
+    lines.append("  fi")
+    lines.append('  local name="${1:-main}"')
+    lines.append('  if tmux has-session -t "$name" 2>/dev/null; then')
+    lines.append('    tmux attach -t "$name"')
+    lines.append("  else")
+    lines.append('    tmux new-session -s "$name"')
+    lines.append("  fi")
+    lines.append("}")
+    lines.append("")
+
+    # tenai_ntfy_status — check notification listeners
+    lines.append("# tenai_ntfy_status — check if ntfy/watcher listeners are running")
+    lines.append("tenai_ntfy_status() {")
+    lines.append('  local found=0')
+    lines.append('  echo "── Notification Listener Status ──"')
+    lines.append('  if pgrep -f "ntfy.sh.*json" >/dev/null 2>&1; then')
+    lines.append('    echo "  ✓ ntfy subscriber running"')
+    lines.append('    pgrep -af "ntfy.sh.*json" | head -3')
+    lines.append("    found=1")
+    lines.append("  fi")
+    lines.append('  if pgrep -f "ci_loop.sh.*daemon" >/dev/null 2>&1; then')
+    lines.append('    echo "  ✓ CI daemon running"')
+    lines.append("    found=1")
+    lines.append("  fi")
+    lines.append('  if pgrep -f "agent_watcher" >/dev/null 2>&1; then')
+    lines.append('    echo "  ✓ Agent watcher daemon running"')
+    lines.append("    found=1")
+    lines.append("  fi")
+    lines.append('  if pgrep -f "orchestrator.py.*webhook" >/dev/null 2>&1; then')
+    lines.append('    echo "  ✓ Orchestrator webhook running"')
+    lines.append("    found=1")
+    lines.append("  fi")
+    lines.append('  [ "$found" -eq 0 ] && echo "  ✗ No notification listeners running"')
+    lines.append("}")
+    lines.append("")
+
+    # tenai_tmux_list
+    lines.append("# tenai_tmux_list [device] — list tmux sessions")
+    lines.append("tenai_tmux_list() {")
+    lines.append('  if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then')
+    lines.append('    echo "Usage: tenai_tmux_list [HOST]"')
+    lines.append('    echo "  List tmux sessions. Without HOST: local. HOST=all: all devices."')
+    lines.append("    return 0")
+    lines.append("  fi")
+    lines.append(f'  make -C {infra_dir} tmux-list $([ -n "$1" ] && echo "HOST=$1")')
+    lines.append("}")
+    lines.append("")
+
+    # tenai_tmux_clean
+    lines.append("# tenai_tmux_clean [device] — kill stale tmux sessions (keeps main)")
+    lines.append("tenai_tmux_clean() {")
+    lines.append('  if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then')
+    lines.append('    echo "Usage: tenai_tmux_clean [HOST]"')
+    lines.append('    echo "  Kill stale tmux sessions (keeps main). HOST=all: all devices."')
+    lines.append("    return 0")
+    lines.append("  fi")
+    lines.append(f'  make -C {infra_dir} tmux-clean $([ -n "$1" ] && echo "HOST=$1")')
+    lines.append("}")
+    lines.append("")
+
+    # tenai_tmux_kill_all
+    lines.append("# tenai_tmux_kill_all [device] — kill ALL tmux sessions")
+    lines.append("tenai_tmux_kill_all() {")
+    lines.append('  if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then')
+    lines.append('    echo "Usage: tenai_tmux_kill_all [HOST]"')
+    lines.append('    echo "  Kill ALL tmux sessions. HOST=all: all devices."')
+    lines.append('    echo "  ⚠ This is destructive — kills every session."')
+    lines.append("    return 0")
+    lines.append("  fi")
+    lines.append(f'  make -C {infra_dir} tmux-kill-all $([ -n "$1" ] && echo "HOST=$1")')
+    lines.append("}")
+    lines.append("")
+
+    # tenai_conductor
+    lines.append("# tenai_conductor — start Gemini conductor session")
+    lines.append("tenai_conductor() {")
+    lines.append('  if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then')
+    lines.append('    echo "Usage: tenai_conductor"')
+    lines.append('    echo "  Start Gemini conductor session for task generation."')
+    lines.append("    return 0")
+    lines.append("  fi")
+    lines.append(f'  make -C {infra_dir} conductor')
+    lines.append("}")
+    lines.append("")
+
+    # tenai_dispatch
+    lines.append("# tenai_dispatch <repo> <title> [cli] [host] — launch agent task")
+    lines.append("tenai_dispatch() {")
+    lines.append('  if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then')
+    lines.append('    echo "Usage: tenai_dispatch [repo] <title> [cli] [host]"')
+    lines.append('    echo "  repo:  repository name (auto-detected from git remote if omitted)"')
+    lines.append('    echo "  title: task description (required)"')
+    lines.append('    echo "  cli:   claude|gemini|codex (default: claude)"')
+    lines.append('    echo "  host:  target device (default: local)"')
+    lines.append("    return 0")
+    lines.append("  fi")
+    lines.append('  local repo="${1:-$(_tenai_detect_repo)}"')
+    lines.append('  if [ -z "$repo" ]; then echo "\\u2717 Cannot detect repo. Pass REPO as first arg."; return 1; fi')
+    lines.append('  local title="${2:?Usage: tenai_dispatch [repo] <title> [cli] [host]}"')
+    lines.append('  local cli="${3:-claude}"')
+    lines.append('  local host="${4:-}"')
+    lines.append(f'  make -C {infra_dir} dispatch REPO="$repo" TITLE="$title" CLI="$cli" HOST="$host"')
+    lines.append("}")
+    lines.append("")
+
+    # tenai_worktree — create a worktree (no agent launch)
+    lines.append("# tenai_worktree <title> [cli] [host] — create worktree from any git repo")
+    lines.append("tenai_worktree() {")
+    lines.append('  if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then')
+    lines.append('    echo "Usage: tenai_worktree <title> [cli] [host]"')
+    lines.append('    echo "  title: task description (required)"')
+    lines.append('    echo "  cli:   claude|gemini|codex (default: claude)"')
+    lines.append('    echo "  host:  target device (default: local)"')
+    lines.append('    echo ""')
+    lines.append('    echo "  Creates a git worktree. Auto-detects org/repo from git remote."')
+    lines.append("    return 0")
+    lines.append("  fi")
+    lines.append('  local title="${1:?Usage: tenai_worktree <title> [cli] [host]}"')
+    lines.append('  local cli="${2:-claude}"')
+    lines.append('  local host="${3:-}"')
+    lines.append('  local repo="$(_tenai_detect_repo)"')
+    lines.append('  if [ -z "$repo" ]; then echo "\\u2717 Not in a git repo. Run from a repo directory."; return 1; fi')
+    lines.append(f'  make -C {infra_dir} worktree REPO="$repo" TITLE="$title" CLI="$cli" HOST="$host"')
+    lines.append("}")
+    lines.append("")
+
+    # tenai_tmux_worktree — dispatch agent in worktree via tmux
+    lines.append("# tenai_tmux_worktree <title> [cli] [host] — dispatch agent in worktree")
+    lines.append("tenai_tmux_worktree() {")
+    lines.append('  if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then')
+    lines.append('    echo "Usage: tenai_tmux_worktree <title> [cli] [host]"')
+    lines.append('    echo "  title: task description (required)"')
+    lines.append('    echo "  cli:   claude|gemini|codex (default: claude)"')
+    lines.append('    echo "  host:  target device (default: local)"')
+    lines.append('    echo ""')
+    lines.append('    echo "  Creates worktree + launches agent in tmux. Auto-detects org/repo."')
+    lines.append("    return 0")
+    lines.append("  fi")
+    lines.append('  local title="${1:?Usage: tenai_tmux_worktree <title> [cli] [host]}"')
+    lines.append('  local cli="${2:-claude}"')
+    lines.append('  local host="${3:-}"')
+    lines.append('  local repo="$(_tenai_detect_repo)"')
+    lines.append('  if [ -z "$repo" ]; then echo "\\u2717 Not in a git repo. Run from a repo directory."; return 1; fi')
+    lines.append(f'  make -C {infra_dir} dispatch REPO="$repo" TASK="$title" CLI="$cli" HOST="$host"')
+    lines.append("}")
+    lines.append("")
+
+    # tenai_task_list
+    lines.append("# tenai_task_list [repo] [status] — query tasks")
+    lines.append("tenai_task_list() {")
+    lines.append('  if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then')
+    lines.append('    echo "Usage: tenai_task_list [repo] [status]"')
+    lines.append('    echo "  repo:   repository name (auto-detected from git remote if omitted)"')
+    lines.append('    echo "  status: active|completed|all (default: active)"')
+    lines.append("    return 0")
+    lines.append("  fi")
+    lines.append('  local repo="${1:-$(_tenai_detect_repo)}"')
+    lines.append('  if [ -z "$repo" ]; then echo "\\u2717 Cannot detect repo. Pass REPO as first arg."; return 1; fi')
+    lines.append('  local status="${2:-active}"')
+    lines.append(f'  make -C {infra_dir} task-list REPO="$repo" STATUS="$status"')
+    lines.append("}")
+    lines.append("")
+
+    # tenai_task_add
+    lines.append("# tenai_task_add [repo] <title> [host] — add a task")
+    lines.append("tenai_task_add() {")
+    lines.append('  if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then')
+    lines.append('    echo "Usage: tenai_task_add [repo] <title> [host]"')
+    lines.append('    echo "  repo:  repository name (auto-detected from git remote if omitted)"')
+    lines.append('    echo "  title: task description (required)"')
+    lines.append('    echo "  host:  target device where DB lives (default: local)"')
+    lines.append("    return 0")
+    lines.append("  fi")
+    lines.append('  local repo="${1:-$(_tenai_detect_repo)}"')
+    lines.append('  if [ -z "$repo" ]; then echo "\\u2717 Cannot detect repo. Pass REPO as first arg."; return 1; fi')
+    lines.append('  local title="${2:?Usage: tenai_task_add [repo] <title> [host]}"')
+    lines.append('  local host="${3:-}"')
+    lines.append(f'  make -C {infra_dir} task-add REPO="$repo" TITLE="$title" HOST="$host"')
+    lines.append("}")
+    lines.append("")
+
+    # ── Proxy routing aliases (SSH SOCKS5 + privoxy HTTP bridge) ─────
+    proxy_cfg = config.get("proxy", {})
+    socks_port = proxy_cfg.get("socks_port", 1055)
+    http_port = proxy_cfg.get("http_port", 8118)
+    exit_node = proxy_cfg.get("exit_node", "")
+    proxied_tools = proxy_cfg.get("proxied_tools", [])
+
+    if proxy_cfg.get("enabled", False):
+        use_autossh = proxy_cfg.get("autossh", True)
+
+        # Auto-detect exit node from config if not explicitly set
+        if not exit_node:
+            exit_nodes = [
+                name for name, dev in devices.items()
+                if dev.get("advertise_exit_node")
+            ]
+            if exit_nodes:
+                exit_node = exit_nodes[0]
+
+        # Look up SSH user for the exit node
+        exit_node_user = ""
+        if exit_node:
+            for dev_name, dev_cfg in devices.items():
+                if dev_name == exit_node:
+                    exit_node_user = dev_cfg.get("user", "")
+                    break
+
+        lines.append("# ── Proxy routing (SSH SOCKS5 + privoxy HTTP bridge) ────")
+        lines.append("# SSH -D creates a SOCKS5 tunnel through the exit node.")
+        lines.append("# privoxy bridges HTTP CONNECT → SOCKS5 (needed for Node.js/Bun).")
+        lines.append("")
+
+        # tenai_proxy_start — starts both SSH tunnel + privoxy
+        lines.append("# tenai_proxy_start [exit_node] — start proxy (SSH tunnel + privoxy)")
+        lines.append("tenai_proxy_start() {")
+        lines.append('  if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then')
+        lines.append('    echo "Usage: tenai_proxy_start [exit_node]"')
+        lines.append(f'    echo "  Start SSH SOCKS5 on :{socks_port} + privoxy HTTP bridge on :{http_port}"')
+        if exit_node:
+            lines.append(f'    echo "  Default exit node: {exit_node}"')
+        lines.append("    return 0")
+        lines.append("  fi")
+        lines.append(f'  local node="${{1:-{exit_node}}}"')
+        lines.append('  if [ -z "$node" ]; then')
+        lines.append('    echo "✗ No exit node specified. Usage: tenai_proxy_start <exit-node>"')
+        lines.append("    return 1")
+        lines.append("  fi")
+
+        # Start SSH SOCKS5 tunnel (autossh or plain ssh)
+        lines.append(f'  if lsof -nP -i4TCP:{socks_port} 2>/dev/null | grep -q LISTEN; then')
+        lines.append(f'    echo "✓ SOCKS5 tunnel already on :{socks_port}"')
+        lines.append("  else")
+        if exit_node_user:
+            lines.append(f'    local ssh_user="{exit_node_user}"')
+        else:
+            lines.append('    local ssh_user=""')
+        for dev_name, dev_cfg in devices.items():
+            dev_user = dev_cfg.get("user", "")
+            if dev_user and dev_name != exit_node:
+                lines.append(f'    [ "$node" = "{dev_name}" ] && ssh_user="{dev_user}"')
+        lines.append('    local ssh_target="$node"')
+        lines.append('    [ -n "$ssh_user" ] && ssh_target="${ssh_user}@${node}"')
+        lines.append(f'    echo "Starting SSH SOCKS5 → $ssh_target (:{socks_port})..."')
+        if use_autossh:
+            # Use autossh with keepalive options, fall back to plain ssh
+            lines.append('    if command -v autossh >/dev/null 2>&1; then')
+            lines.append(f'      AUTOSSH_GATETIME=0 autossh -M 0'
+                         f' -o ServerAliveInterval=30 -o ServerAliveCountMax=3'
+                         f' -o ConnectTimeout=10 -o ExitOnForwardFailure=yes'
+                         f' -o StrictHostKeyChecking=accept-new'
+                         f' -D {socks_port} -fN "$ssh_target" 2>/dev/null')
+            lines.append("    else")
+            lines.append('      echo "  (autossh not found, using plain ssh)"')
+            lines.append(f'      ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new'
+                         f' -D {socks_port} -fNq "$ssh_target" 2>/dev/null')
+            lines.append("    fi")
+        else:
+            lines.append(f'    ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new'
+                         f' -D {socks_port} -fNq "$ssh_target" 2>/dev/null')
+        lines.append("    local _retries=0")
+        lines.append("    while [ $_retries -lt 5 ]; do")
+        lines.append("      sleep 1")
+        lines.append(f'      if lsof -nP -i4TCP:{socks_port} 2>/dev/null | grep -q LISTEN; then')
+        lines.append(f'        echo "✓ SOCKS5 tunnel on :{socks_port} → $ssh_target"')
+        lines.append("        break")
+        lines.append("      fi")
+        lines.append("      _retries=$((_retries + 1))")
+        lines.append("    done")
+        lines.append("    if [ $_retries -ge 5 ]; then")
+        lines.append('      echo "✗ SSH tunnel failed after 5s. Check: ssh $ssh_target"')
+        lines.append("      return 1")
+        lines.append("    fi")
+        lines.append("  fi")
+
+        # Start privoxy HTTP bridge
+        lines.append(f'  if lsof -nP -i4TCP:{http_port} 2>/dev/null | grep -q LISTEN; then')
+        lines.append(f'    echo "✓ HTTP bridge already on :{http_port}"')
+        lines.append("  else")
+        lines.append('    local privoxy_bin=""')
+        lines.append('    local privoxy_conf=""')
+        lines.append('    if [ -x "$(brew --prefix 2>/dev/null)/opt/privoxy/sbin/privoxy" ]; then')
+        lines.append('      privoxy_bin="$(brew --prefix)/opt/privoxy/sbin/privoxy"')
+        lines.append('      privoxy_conf="$(brew --prefix)/etc/privoxy/config"')
+        lines.append('    elif command -v privoxy >/dev/null 2>&1; then')
+        lines.append('      privoxy_bin="privoxy"')
+        lines.append('      privoxy_conf="/etc/privoxy/config"')
+        lines.append("    fi")
+        lines.append('    if [ -z "$privoxy_bin" ]; then')
+        lines.append('      echo "⚠ privoxy not found. Install: brew install privoxy (or apt install privoxy)"')
+        lines.append('      echo "  Without it, only curl/wget will be proxied (not Node.js/Bun apps)"')
+        lines.append("    else")
+        lines.append(f'      echo "Starting privoxy HTTP bridge (:{http_port})..."')
+        lines.append('      "$privoxy_bin" "$privoxy_conf" 2>/dev/null')
+        lines.append("      sleep 1")
+        lines.append(f'      if lsof -nP -i4TCP:{http_port} 2>/dev/null | grep -q LISTEN; then')
+        lines.append(f'        echo "✓ HTTP bridge on :{http_port} → SOCKS5 :{socks_port}"')
+        lines.append("      else")
+        lines.append('        echo "⚠ privoxy failed to start. Check config: $privoxy_conf"')
+        lines.append("      fi")
+        lines.append("    fi")
+        lines.append("  fi")
+        lines.append("}")
+        lines.append("")
+
+        # tenai_proxy_stop — stops both
+        lines.append("# tenai_proxy_stop — stop proxy (SSH tunnel + privoxy)")
+        lines.append("tenai_proxy_stop() {")
+        # Stop SSH tunnel
+        lines.append(f"  local socks_pids=$(lsof -nP -i4TCP:{socks_port} 2>/dev/null"
+                     " | grep LISTEN | awk '{print $2}')")
+        lines.append('  if [ -n "$socks_pids" ]; then')
+        lines.append('    echo "$socks_pids" | xargs kill 2>/dev/null')
+        lines.append(f'    echo "✓ SOCKS5 tunnel stopped (:{socks_port})"')
+        lines.append("  fi")
+        # Stop privoxy
+        lines.append(f"  local http_pids=$(lsof -nP -i4TCP:{http_port} 2>/dev/null"
+                     " | grep LISTEN | awk '{print $2}')")
+        lines.append('  if [ -n "$http_pids" ]; then')
+        lines.append('    echo "$http_pids" | xargs kill 2>/dev/null')
+        lines.append(f'    echo "✓ HTTP bridge stopped (:{http_port})"')
+        lines.append("  fi")
+        lines.append('  if [ -z "$socks_pids" ] && [ -z "$http_pids" ]; then')
+        lines.append('    echo "Proxy was not running"')
+        lines.append("  fi")
+        lines.append("}")
+        lines.append("")
+
+        # tenai_proxy_status
+        lines.append("# tenai_proxy_status — check proxy status")
+        lines.append("tenai_proxy_status() {")
+        lines.append(f'  echo "SOCKS5 (:{socks_port}):"')
+        lines.append(f'  if lsof -nP -i4TCP:{socks_port} 2>/dev/null | grep -q LISTEN; then')
+        lines.append(f'    echo "  ✓ running"; lsof -nP -i4TCP:{socks_port} | grep LISTEN')
+        lines.append("  else")
+        lines.append('    echo "  ✗ not running"')
+        lines.append("  fi")
+        lines.append(f'  echo "HTTP bridge (:{http_port}):"')
+        lines.append(f'  if lsof -nP -i4TCP:{http_port} 2>/dev/null | grep -q LISTEN; then')
+        lines.append(f'    echo "  ✓ running"; lsof -nP -i4TCP:{http_port} | grep LISTEN')
+        lines.append("  else")
+        lines.append('    echo "  ✗ not running"')
+        lines.append("  fi")
+        lines.append("}")
+        lines.append("")
+
+        # tenai_proxy_daemon — enable/disable/status for OS daemon
+        lines.append("# tenai_proxy_daemon — manage persistent SOCKS5 daemon")
+        lines.append("tenai_proxy_daemon() {")
+        lines.append('  local action="${1:-status}"')
+        lines.append('  if [ "$action" = "--help" ] || [ "$action" = "-h" ]; then')
+        lines.append('    echo "Usage: tenai_proxy_daemon [enable|disable|status]"')
+        lines.append('    echo "  Manage the persistent SOCKS5 tunnel daemon."')
+        lines.append('    echo "  macOS: uses launchd (com.tenai.socks5)"')
+        lines.append('    echo "  Linux: uses systemd user service (tenai-socks5)"')
+        lines.append("    return 0")
+        lines.append("  fi")
+        # macOS launchd
+        lines.append('  local plist="$HOME/Library/LaunchAgents/com.tenai.socks5.plist"')
+        lines.append('  if [ "$(uname)" = "Darwin" ]; then')
+        lines.append('    if [ ! -f "$plist" ]; then')
+        lines.append('      echo "✗ Daemon plist not found. Run: make proxy"')
+        lines.append("      return 1")
+        lines.append("    fi")
+        lines.append('    case "$action" in')
+        lines.append('      enable)')
+        lines.append('        launchctl load "$plist" 2>/dev/null')
+        lines.append('        echo "✓ SOCKS5 daemon enabled (launchd)"')
+        lines.append('        echo "  Will auto-start on login and network changes."')
+        lines.append('        ;;')
+        lines.append('      disable)')
+        lines.append('        launchctl unload "$plist" 2>/dev/null')
+        lines.append('        echo "✓ SOCKS5 daemon disabled"')
+        lines.append('        ;;')
+        lines.append('      status)')
+        lines.append('        if launchctl list com.tenai.socks5 2>/dev/null | grep -q PID; then')
+        lines.append('          echo "✓ SOCKS5 daemon: running (launchd)"')
+        lines.append('          launchctl list com.tenai.socks5 2>/dev/null')
+        lines.append("        else")
+        lines.append('          echo "✗ SOCKS5 daemon: not running"')
+        lines.append('          echo "  Enable with: tenai_proxy_daemon enable"')
+        lines.append("        fi")
+        lines.append('        ;;')
+        lines.append('      *) echo "Usage: tenai_proxy_daemon [enable|disable|status]" ;;')
+        lines.append("    esac")
+        # Linux systemd
+        lines.append("  else")
+        lines.append('    case "$action" in')
+        lines.append('      enable)')
+        lines.append('        systemctl --user enable --now tenai-socks5 2>/dev/null')
+        lines.append('        loginctl enable-linger "$(whoami)" 2>/dev/null || true')
+        lines.append('        echo "✓ SOCKS5 daemon enabled (systemd)"')
+        lines.append('        echo "  Will auto-start on boot and network changes."')
+        lines.append('        ;;')
+        lines.append('      disable)')
+        lines.append('        systemctl --user disable --now tenai-socks5 2>/dev/null')
+        lines.append('        echo "✓ SOCKS5 daemon disabled"')
+        lines.append('        ;;')
+        lines.append('      status)')
+        lines.append('        if systemctl --user is-active tenai-socks5 >/dev/null 2>&1; then')
+        lines.append('          echo "✓ SOCKS5 daemon: running (systemd)"')
+        lines.append('          systemctl --user status tenai-socks5 2>&1 | head -5')
+        lines.append("        else")
+        lines.append('          echo "✗ SOCKS5 daemon: not running"')
+        lines.append('          echo "  Enable with: tenai_proxy_daemon enable"')
+        lines.append("        fi")
+        lines.append('        ;;')
+        lines.append('      *) echo "Usage: tenai_proxy_daemon [enable|disable|status]" ;;')
+        lines.append("    esac")
+        lines.append("  fi")
+        lines.append("}")
+        lines.append("")
+
+        # tenai_proxy_test — comprehensive IP test
+        lines.append("# tenai_proxy_test — compare real vs proxied IP")
+        lines.append("tenai_proxy_test() {")
+        lines.append('  echo "── Real IP ──"')
+        lines.append('  curl -s --max-time 5 https://ipinfo.io/ip 2>/dev/null || echo "(failed)"')
+        lines.append('  echo ""')
+        lines.append('  echo "── Proxied IP (SOCKS5) ──"')
+        lines.append(f'  curl -s --max-time 30 --proxy socks5h://127.0.0.1:{socks_port}'
+                     ' https://ipinfo.io/ip 2>/dev/null || echo "(failed)"')
+        lines.append('  echo ""')
+        lines.append('  echo "── Proxied IP (HTTP bridge — used by Node.js/Bun) ──"')
+        lines.append(f'  HTTPS_PROXY=http://127.0.0.1:{http_port}'
+                     ' curl -s --max-time 30 https://ipinfo.io/ip 2>/dev/null || echo "(failed)"')
+        lines.append('  echo ""')
+        lines.append("}")
+        lines.append("")
+
+        # Per-tool proxied aliases using HTTPS_PROXY (works with Node.js/Bun)
+        if proxied_tools:
+            lines.append("# ── Proxied CLI aliases ────────────────────────")
+            lines.append("# Route via HTTPS_PROXY → privoxy → SOCKS5 → SSH exit node.")
+            lines.append("# Uses HTTP CONNECT proxy (privoxy) which Node.js/Bun respects.")
+            for tool in proxied_tools:
+                safe = tool.replace("-", "_").replace(".", "_")
+                lines.append(f"tenai_{safe}() {{")
+                lines.append(f'  HTTPS_PROXY=http://127.0.0.1:{http_port}'
+                             f' HTTP_PROXY=http://127.0.0.1:{http_port}'
+                             f' NO_PROXY=localhost,127.0.0.1 {tool} "$@"')
+                lines.append("}")
+            lines.append("")
+
+    elif proxied_tools:
+        lines.append("# ── Disable Proxy Tool CLI aliases ─────────────")
+        lines.append("# Proxy disabled. These aliases run tools directly.")
+        for tool in proxied_tools:
+            safe = tool.replace("-", "_").replace(".", "_")
+            lines.append(f"alias tenai_{safe}='{tool}'")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _safe_name(dev_name: str) -> str:
+    """Convert a device name to a safe alias name (alphanumeric + underscore)."""
+    return dev_name.replace("-", "_").replace(".", "_")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Generate tenai aliases from config")
+    parser.add_argument("--dry-run", action="store_true", help="Print to stdout instead of writing file")
+    parser.add_argument("--output", default=os.path.expanduser("~/.tenai_aliases"),
+                        help="Output file path (default: ~/.tenai_aliases)")
+    parser.add_argument("--for-device", default=None, metavar="NAME",
+                        help="Generate aliases as if running on the named device (for remote push)")
+    args = parser.parse_args()
+
+    config = load_config()
+    # --for-device overrides which device is treated as "self"
+    if args.for_device:
+        my_device = args.for_device
+        # When generating for a remote device, use its default_dir, not local path
+        devices = config.get("tailscale", {}).get("devices", {})
+        dev_cfg = devices.get(my_device, {})
+        remote_infra_dir = dev_cfg.get("default_dir", "~/tenai-infra")
+    else:
+        my_device = get_my_device_name()
+        remote_infra_dir = None  # use local path
+    content = generate_aliases(config, my_device, infra_dir=remote_infra_dir)
+
+    if args.dry_run:
+        print(content)
+        print(f"\n# Devices found: {list(config.get('tailscale', {}).get('devices', {}).keys())}")
+        print(f"# Current device: {my_device or '(unknown)'}")
+    else:
+        with open(args.output, "w") as f:
+            f.write(content)
+        os.chmod(args.output, 0o644)
+        print(f"✓ Aliases written to {args.output}")
+        dev_count = len(config.get("tailscale", {}).get("devices", {}))
+        print(f"  {dev_count} devices from config, current device: {my_device or '(unknown)'}")
+
+if __name__ == "__main__":
+    main()

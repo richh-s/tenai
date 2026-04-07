@@ -1,0 +1,152 @@
+# sandboxtest.yaml — base config loaded by all commands
+# Personal overrides go in config/local.yaml (gitignored).
+# Set TENAI_CONFIG in .env to use a different overlay file.
+defaults:
+  - device: server
+  - _self_
+
+tailscale:
+  tailnet: ""
+  devices: {}
+    # Devices are defined in config/local.yaml. Example:
+    # myserver:
+    #   ip: "100.x.y.z"
+    #   user: ubuntu
+    #   type: server
+    #   advertise_exit_node: true
+    #   capabilities: [conductor, dispatch, claude, gemini, codex]
+    #   skip_tools: []
+
+organizations: {}
+  # Organizations are defined in config/local.yaml. Example:
+  # myorg:
+  #   github_url: "github.com"
+  #   ssh_host_alias: "github-myorg"
+  #   ssh_key: "~/.ssh/tenai-ssh-key"
+  #   default_branch: main
+  #   github_api_token_name: "GITHUB_TOKEN"
+
+repos:
+  base_dir: "~/tenai-autotest-projects"
+  infra_dir: "tenai-autotest"          # directory name of this repo on remote devices (~/tenai)
+                               # change to match your clone path (e.g. tenai-infra for old installs)
+
+conductor:
+  tmux_session_suffix: "-conductor"
+  gemini_model: "gemini-3.1-pro-preview"  # gemini-3-flash-preview, gemini-2.5-pro, gemini-2.5-flash
+  claude_model: "sonnet"                  # sonnet (4.6), opus (4.6)
+  codex_model: ""                         # empty = codex default (gpt-5.4)
+  split_pane: false                       # true = task monitor in right pane (bad on mobile)
+  task_output_file: "TASKS.md"
+  workflow:
+    - spec
+    - plan
+    - implement
+
+orchestrator:
+  poll_interval: 30              # seconds between orchestrator cycles
+  max_concurrent: 4              # max parallel worktrees/agents at a time
+  task_timelimit: 120            # global default minutes (0 = never expire)
+  auto_merge: true               # auto-merge when all agents complete
+  github_sync: true              # update GitHub Issue status on completion
+  gc:
+    enabled: true                # run garbage collection each cycle
+    copy_artifacts: true         # copy PROOF.md + WORKTREE.md to archive before removal
+    archive_dir: "~/.tenai/artifacts"
+
+
+ci:
+  ntfy_enabled: false              # opt-in: enable ntfy.sh-based notifications
+  ntfy_topic: ""                   # machine-to-machine notifications
+  ntfy_topic_human: ""             # dead-queue / human-in-the-loop (defaults to {ntfy_topic}-human)
+  local_validate:
+    - "make lint"
+    - "make test"
+  github:
+    workflow_file: ".github/workflows/ci.yml"
+    notify_step: true
+  budget_cap_usd: 5.0
+  review_notify:
+    enabled: true                  # Forward PR reviews to agent sessions
+    exclude_logins: []             # Exclude these reviewers (empty = forward ALL reviews)
+    test_branches:                 # Scope to these branches only (empty = all branches)
+      - "test/review-notify"
+  agent_watcher:
+    enabled: true                  # GitHub-polling daemon (default mode)
+    poll_interval: 30              # seconds between GitHub API polls
+    watch_duration: 3600           # seconds to watch after agent push (1hr)
+    max_review_cycles: 3           # stop after N review→fix cycles per PR
+
+symphony:
+  enabled: false               # opt-in: install via make install-symphony
+  tracker: github              # github or linear
+  workflow_file: WORKFLOW.md
+  max_concurrent: 4
+  log_dir: "~/symphony-logs"
+
+gastown:
+  enabled: false               # opt-in: install via make install-gastown
+  town_dir: "~/gt"
+  session_tracking: true
+
+webapp:
+  device: ""                       # set in config/local.yaml (device that hosts the webapp)
+  port: 7700
+  host: "0.0.0.0"
+  auth_token: ""
+
+proxy:
+  enabled: false                # set to true in config/local.yaml after configuring Tailscale
+  autossh: true                   # Use autossh for auto-reconnecting tunnel
+  socks_port: 1055                # SOCKS5 port for SSH tunnel
+  http_port: 8118                 # HTTP bridge port (privoxy → SOCKS5)
+  exit_node: ""                   # set in config/local.yaml (Tailscale exit node name)
+  proxied_tools:                  # CLI tools to create tenai_* proxied aliases for
+    - claude
+    - gemini
+    - codex
+
+tools:
+  common:
+    - tmux
+    - mosh
+    - git
+    - curl
+    - wget
+    - jq
+  server:
+    - tailscale
+    - ufw
+    - htop
+    - mosh
+  mac:
+    - tailscale
+    - mosh
+  android:
+    - openssh
+    - mosh
+    - git
+    - python
+  ios_ish:
+    - openssh
+    - mosh
+    - git
+    - python
+  windows:
+    - openssh-server
+    - git
+    - python
+    - node
+
+tmux:
+  prefix: "C-a"
+  mouse: true
+  history_limit: 50000
+  default_session: main
+
+ssh:
+  key_type: ed25519
+  key_comment: "tenai"
+  key_name: "tenai-ssh-key"            # SSH key name used for mesh auth
+  key_distribution: "shared"            # "shared" = copy same key to all devices
+                                        # "per-device" = each device generates its own key
