@@ -1,0 +1,28 @@
+services:
+  webapp:
+    build: .
+    # Host networking to access Tailscale mesh directly
+    network_mode: host
+    volumes:
+      # SQLite DB + state — mount at appuser HOME so paths match
+      - ~/.tenai:/home/appuser/.tenai
+      # YAML config (org/device definitions)
+      - ./config:/app/config:ro
+      # Env secrets
+      - ./.env:/app/.env:ro
+      # SSH keys — mounted read-only; entrypoint copies with correct perms
+      - ~/.ssh:/ssh-host:ro
+      # Tailscale socket — for device status via LocalAPI
+      - /var/run/tailscale/tailscaled.sock:/var/run/tailscale/tailscaled.sock
+      # Tailscale CLI binary — for `tailscale status --json` (most reliable status check)
+      - /usr/bin/tailscale:/usr/bin/tailscale:ro
+    environment:
+      - DEVICE_NAME=${DEVICE_NAME:-}
+      - WEBAPP_PORT=${WEBAPP_PORT:-7700}
+      - WEBAPP_HOST=0.0.0.0
+      - CONFIG_DIR=/app/config
+      - PYTHONPATH=/app/webapp
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - TAILSCALE_API_KEY=${TAILSCALE_API_KEY:-}
+    restart: unless-stopped
+

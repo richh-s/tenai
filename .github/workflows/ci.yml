@@ -1,0 +1,78 @@
+name: CI — Lint & Test
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main, master]
+
+env:
+  NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Create venv & install deps
+        run: |
+          uv venv .venv
+          uv pip install -p .venv pyyaml python-dotenv hydra-core omegaconf pydantic
+          uv pip install -p .venv fastapi uvicorn
+          uv pip install -p .venv pytest httpx ruff
+
+      - name: Lint (ruff)
+        run: .venv/bin/python3 -m ruff check scripts/ webapp/ tests/
+
+      - name: Test (pytest)
+        run: .venv/bin/python3 -m pytest tests/ -x -q --tb=short
+
+      # ── CI Signal — notify agents via ntfy.sh ──────────────────────────────
+      - name: Signal CI result via ntfy
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          RUN_ID: ${{ github.run_id }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          if [ -z "$NTFY_TOPIC" ]; then
+            echo "NTFY_TOPIC not set — skipping signal"
+            exit 0
+          fi
+
+          EMOJI="✅"
+          PRIORITY=3
+          [ "$JOB_STATUS" = "failure" ] && EMOJI="❌" && PRIORITY=4
+
+          curl -s -X POST "https://ntfy.sh/${NTFY_TOPIC}" \
+            -H "Content-Type: application/json" \
+            -H "Priority: ${PRIORITY}" \
+            -d "{
+              \"topic\": \"${NTFY_TOPIC}\",
+              \"title\": \"${EMOJI} CI ${JOB_STATUS}: ${REPO}\",
+              \"message\": \"Branch: ${BRANCH}\nCommit: ${SHA:0:8}\n${COMMIT_MSG}\",
+              \"tags\": [\"ci\", \"${JOB_STATUS}\", \"tenai-infra\"],
+              \"extras\": {
+                \"run_id\": \"${RUN_ID}\",
+                \"status\": \"${JOB_STATUS}\",
+                \"repo\": \"${REPO}\",
+                \"branch\": \"${BRANCH}\",
+                \"sha\": \"${SHA}\"
+              }
+            }"
+
+          echo "✓ CI signal sent (status=${JOB_STATUS})"

@@ -1,0 +1,56 @@
+{
+  "hooks": {
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "name": "notify",
+            "type": "command",
+            "command": "HOOK_TITLE='Gemini CLI' HOOK_MESSAGE='needs your attention' \"$GEMINI_PROJECT_DIR/config/cli/hooks/scripts/notify.sh\" || true",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "BeforeTool": [
+      {
+        "matcher": "write_file|replace|edit_file",
+        "hooks": [
+          {
+            "name": "protect-files",
+            "type": "command",
+            "command": "\"$GEMINI_PROJECT_DIR/config/cli/hooks/scripts/protect-files.sh\"",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "PreCompress": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "name": "post-compact-context",
+            "type": "command",
+            "command": "\"$GEMINI_PROJECT_DIR/config/cli/hooks/scripts/post-compact-context.sh\"",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "AfterTool": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "name": "audit-log",
+            "type": "command",
+            "command": "\"$GEMINI_PROJECT_DIR/config/cli/hooks/scripts/audit-log.sh\"",
+            "timeout": 5000
+          }
+        ]
+      }
+    ]
+  }
+}

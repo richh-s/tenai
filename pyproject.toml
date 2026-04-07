@@ -1,0 +1,64 @@
+[project]
+name = "tenai-infra"
+version = "0.0.1"
+description = "Infrastructure-as-code for the tenai mesh network"
+authors = [
+    {name = "AI Agents (Claude Opus 4.6 thinking primary, Gemini 3.1 Pro secondary with Antigravity and Claude Code)"},
+    {name = "yabebalFantaye"}
+]
+requires-python = ">=3.10"
+
+dependencies = [
+    "hydra-core>=1.3",
+    "omegaconf>=2.3",
+    "python-dotenv>=1.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+webapp = [
+    "fastapi>=0.115",
+    "uvicorn>=0.34",
+    "pydantic>=2.0",
+]
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.27",
+    "ruff>=0.9",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "unit: pure unit tests (no I/O, no network)",
+    "integration: tests with real DB or TestClient",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long — handled by formatter
+    "B008",  # do not perform function calls in argument defaults (FastAPI uses this)
+    "E401",  # multiple imports on one line — pre-existing in webapp/server.py
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B", "E712", "E741"]
+"webapp/server.py" = ["I001", "UP045", "F541", "B905", "E401"]
+"webapp/db.py" = ["I001", "UP045"]
+"setup.py" = ["I001"]
+"scripts/*" = ["I001", "B007"]

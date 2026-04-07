@@ -1,0 +1,67 @@
+# config/local.yaml.example — Personal configuration template
+# Copy to config/local.yaml and customize with your devices and organizations.
+# This file deep-merges on top of config/defaults.yaml.
+# Set TENAI_CONFIG=config/myfile.yaml in .env to use a different overlay.
+
+# ── Your Tailscale mesh ─────────────────────────────────────────────────────
+tailscale:
+  tailnet: "yourname@"           # Your Tailscale tailnet (e.g. user@, org.example.com)
+  devices:
+    myserver:
+      ip: "100.x.y.z"           # Tailscale IP
+      user: ubuntu               # SSH user
+      type: server               # server | mac | android | ios_ish | windows
+      advertise_exit_node: true  # Proxy traffic through this device
+      capabilities: [conductor, dispatch, claude, gemini, codex]
+      skip_tools: []
+    mymac:
+      ip: "100.x.y.z"
+      user: yourname
+      type: mac
+      capabilities: [conductor, claude, gemini, codex]
+      skip_tools: []
+    # myphone:
+    #   ip: "100.x.y.z"
+    #   user: yourname
+    #   type: android
+    #   ssh_port: 8022
+    #   capabilities: []
+    #   skip_tools: [vibetunnel, muxtree, codex_cli, gemini_cli, ufw, htop]
+
+# ── Your GitHub organizations ───────────────────────────────────────────────
+organizations:
+  myorg:
+    github_url: "github.com"
+    ssh_host_alias: "github-myorg"
+    ssh_key: "~/.ssh/tenai-ssh-key"
+    default_branch: main
+    github_api_token_name: "GITHUB_TOKEN"
+  # anotherorg:
+  #   github_url: "github.com"
+  #   ssh_host_alias: "github-anotherorg"
+  #   ssh_key: "~/.ssh/tenai-ssh-key"
+  #   default_branch: main
+  #   github_api_token_name: "GITHUB_TOKEN"
+
+# ── Webapp ──────────────────────────────────────────────────────────────────
+webapp:
+  device: "myserver"             # Which device runs the control panel Docker container
+
+# ── Proxy ───────────────────────────────────────────────────────────────────
+# Routes CLI tools (claude, gemini, codex) through a Tailscale exit node
+# to get a US/EU IP for API access. Requires: Tailscale + autossh + privoxy.
+proxy:
+  enabled: true                  # Enable after configuring Tailscale mesh
+  exit_node: "myserver"          # Device name that advertises as exit node
+
+# ── SSH ─────────────────────────────────────────────────────────────────────
+ssh:
+  key_name: "tenai-ssh-key"      # SSH key filename in ~/.ssh/
+  key_comment: "tenai"           # Comment in the SSH key
+
+# ── Any other overrides ─────────────────────────────────────────────────────
+# You can override ANY key from defaults.yaml here. Examples:
+# conductor:
+#   gemini_model: "gemini-2.5-flash"
+# orchestrator:
+#   max_concurrent: 2
