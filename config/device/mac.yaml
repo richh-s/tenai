@@ -1,0 +1,12 @@
+# config/devices/mac.yaml
+device:
+  type: mac
+  os: macos
+  shell: zsh
+  package_manager: brew
+  user: "${USER}"
+  tailscale_flags: "--accept-routes  --ssh"
+  mosh:
+    bind_server: false
+  ssh:
+    remote_login: true         # sudo systemsetup -setremotelogin on

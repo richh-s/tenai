@@ -1,0 +1,40 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/config/cli/hooks/scripts/protect-files.sh\"",
+            "statusMessage": "Checking file protection"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/config/cli/hooks/scripts/post-compact-context.sh\"",
+            "statusMessage": "Loading session context"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/config/cli/hooks/scripts/audit-log.sh\"",
+            "statusMessage": "Logging tool usage"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,25 @@
+# config/devices/windows.yaml — Windows Desktop
+device:
+  type: windows
+  os: windows
+  shell: powershell
+  package_manager: winget
+  user: ""
+  tailscale_flags: "--accept-routes --ssh"
+  skip_tools: [muxtree, vibetunnel, python_env]
+  ssh:
+    server: true                   # Built-in OpenSSH (Win10+, optional feature)
+    remote_login: true
+  mosh:
+    supported: false               # No native mosh on Windows
+    bind_server: false
+    wsl_fallback: true             # Can use mosh via WSL2 if available
+  windows:
+    # Native Windows uses PowerShell + built-in OpenSSH
+    # WSL2 is optional for mosh support and bash compatibility
+    # bootstrap via: scripts/install/bootstrap_windows.ps1
+    wsl2_optional: true
+    # Prerequisites:
+    #   1. Install Tailscale from https://tailscale.com/download/windows
+    #   2. Enable OpenSSH Server (Settings > Apps > Optional Features)
+    #   3. Run: powershell -File scripts/install/bootstrap_windows.ps1

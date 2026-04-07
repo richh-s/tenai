@@ -1,0 +1,22 @@
+# config/devices/server.yaml
+device:
+  type: server
+  os: linux
+  shell: bash
+  package_manager: apt
+  user: ubuntu
+  tailscale_flags: "--advertise-exit-node --ssh"
+  mosh:
+    bind_server: true          # bind to tailscale IP
+    udp_ports: "60000:61000"
+  firewall:
+    # Ports managed by tenai scripts. SSH is NOT included — that's the user's
+    # responsibility (if we can SSH in, it already works).
+    managed_ports:
+      - "60000:61000/udp"      # mosh
+      - "tailscale0"           # all traffic on tailnet interface
+    cloud_skip: true           # skip host firewall on cloud instances (use Security Groups)
+  sysctl:
+    net.ipv4.ip_forward: 1
+    net.ipv6.conf.all.forwarding: 1
+

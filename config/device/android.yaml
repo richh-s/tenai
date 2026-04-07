@@ -1,0 +1,16 @@
+# config/devices/android.yaml
+device:
+  type: android
+  os: android
+  shell: bash
+  package_manager: pkg
+  user: "${USER}"
+  tailscale_flags: "--accept-routes --ssh"
+  skip_tools: [vibetunnel, muxtree, codex_cli, gemini_cli, vim, ufw, htop, python_env]
+  mosh:
+    bind_server: true
+  termux:
+    storage: true              # termux-setup-storage
+    wake_lock: true
+    # Prerequisites (user must install manually before make new-server):
+    #   pkg install openssh && sshd
