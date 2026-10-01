@@ -14,6 +14,7 @@ Usage:
 Requires: gh (GitHub CLI, authenticated), tmux
 """
 
+import utils.session
 import argparse
 import json
 import os
